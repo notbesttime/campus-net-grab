@@ -26,6 +26,11 @@ const state = {
   wifiSsid: '',          // 最近一次 status 返回的当前 SSID
   restoreFrom: '',       // 可切回的原网络（只由用户点击触发切换）
   lastPauseMsg: '',      // 最近一次暂停条文案（用于补挂切回按钮）
+  ipNotes: {},           // IP 备注（服务端 ip-notes.json，键为纯 IPv4）
+  usageOpen: true,       // 用量卡展开状态（localStorage 记忆）
+  lastUsage: null,       // 最近一次用量结果（改备注后原地重渲染）
+  lastDevices: null,     // 最近一次设备列表（同上）
+  lastEndpoints: null,
 };
 
 const STATUS_INTERVAL_MS = 60000;      // 前台自动探测门户状态
@@ -629,6 +634,8 @@ async function saveAcctForm(ev) {
 function renderDevices(devices, endpoints) {
   const body = $('devBody');
   body.innerHTML = '';
+  state.lastDevices = devices || [];
+  state.lastEndpoints = endpoints || [];
   if (!devices || !devices.length) {
     const tr = document.createElement('tr');
     const td = document.createElement('td');
@@ -674,6 +681,9 @@ function renderDevices(devices, endpoints) {
     const td3 = document.createElement('td');
     td3.className = 'mono';
     td3.textContent = d.ip || '—';
+    // 该 IP 有备注时，在设备表里同步显示（方便认出是哪台设备）
+    const noteEl = ipNoteEl(d.ip);
+    if (noteEl && state.ipNotes[d.ip]) td3.appendChild(noteEl);
 
     const td4 = document.createElement('td');
     if (d.isSelf) {
@@ -849,6 +859,7 @@ function renderUsage(r) {
   const grid = $('usageGrid');
   grid.innerHTML = '';
   const hint = $('usageHint');
+  state.lastUsage = r;
   if (!r.ips || !r.ips.length) {
     const d = document.createElement('div');
     d.className = 'hint usage-empty';
@@ -879,6 +890,8 @@ function renderUsage(r) {
       s.textContent = '本机';
       head.appendChild(s);
     }
+    const noteEl2 = ipNoteEl(ip.ip);
+    if (noteEl2) head.appendChild(noteEl2);
     card.appendChild(head);
 
     const mk = (k, v) => {
@@ -1168,6 +1181,65 @@ function setTheme(name, persist) {
   });
 }
 
+/* ---------------- IP 备注 ---------------- */
+async function loadIpNotes() {
+  if (state.mode !== 'server') return;
+  try {
+    const r = await api('/api/ipnotes');
+    state.ipNotes = (r && r.notes) || {};
+    if (state.lastUsage) renderUsage(state.lastUsage);
+    if (state.lastDevices) renderDevices(state.lastDevices, state.lastEndpoints || []);
+  } catch { /* 备注读取失败不影响主流程 */ }
+}
+
+async function editIpNote(ip) {
+  const cur = state.ipNotes[ip] || '';
+  const val = prompt('为 ' + ip + ' 设置备注（留空表示删除）：', cur);
+  if (val === null) return;
+  try {
+    const r = await api('/api/ipnotes', { ip, note: val });
+    state.ipNotes = (r && r.notes) || state.ipNotes;
+    if (state.lastUsage) renderUsage(state.lastUsage);
+    if (state.lastDevices) renderDevices(state.lastDevices, state.lastEndpoints || []);
+    toast(val.trim() ? '备注已保存：' + val.trim() : '备注已删除', 'ok');
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+/** 生成备注胶囊或「＋备注」按钮（usage 卡与设备表共用） */
+function ipNoteEl(ip) {
+  if (state.mode !== 'server') return null; // 备注存在服务端文件，轻量模式没有可写的地方
+  if (!ip || ip === '—') return null;
+  const note = state.ipNotes[ip];
+  const el = document.createElement('button');
+  el.type = 'button';
+  if (note) {
+    el.className = 'ip-note';
+    el.textContent = note;
+    el.title = '点击修改“' + ip + '”的备注';
+  } else {
+    el.className = 'ip-note-add';
+    el.textContent = '＋备注';
+    el.title = '为 ' + ip + ' 添加备注';
+  }
+  el.onclick = () => editIpNote(ip);
+  return el;
+}
+
+/* ---------------- 用量卡折叠 ---------------- */
+function setUsageOpen(open, persist) {
+  state.usageOpen = !!open;
+  const body = $('usageBody');
+  const btn = $('btnUsageToggle');
+  if (body) body.classList.toggle('hidden', !state.usageOpen);
+  if (btn) {
+    btn.textContent = state.usageOpen ? '收起' : '展开';
+    btn.setAttribute('aria-expanded', String(state.usageOpen));
+  }
+  if (persist) localStorage.setItem('cnal_usageOpen', state.usageOpen ? '1' : '0');
+}
+
 /* ---------------- 事件绑定 ---------------- */
 function bindEvents() {
   const sw = $('themeSwatches');
@@ -1213,6 +1285,7 @@ function bindEvents() {
   $('acctForm').onsubmit = saveAcctForm;
   $('btnDevRefresh').onclick = refreshDevices;
   $('btnUsageRefresh').onclick = loadUsage;
+  $('btnUsageToggle').onclick = () => setUsageOpen(!state.usageOpen, true);
   $('accountSelect').onchange = () => autoLoadForAccount();
   $('btnSelfLogout').onclick = async () => {
     if (!confirm(
@@ -1354,6 +1427,8 @@ async function init() {
   }
   state.masked = localStorage.getItem('cnal_masked') === '1';
   document.body.classList.toggle('masked', state.masked);
+  // 用量卡折叠状态：默认收起（保证一屏装下），用户选择会被记住
+  setUsageOpen(localStorage.getItem('cnal_usageOpen') === '1', false);
   bindEvents();
   bindTermLogUI();
 
@@ -1402,7 +1477,7 @@ async function init() {
   await refreshAccounts();
   await refreshStatus(true);
   log(state.mode === 'server' ? '控制台已就绪（完整模式）' : '控制台已就绪（轻量模式）', 'hi');
-  if (state.mode === 'server') autoLoadForAccount();
+  if (state.mode === 'server') { autoLoadForAccount(); loadIpNotes(); }
   // 状态：前台每 60s 轻量探测（门户+NCSI，仅 2 次请求）
   // 离开控制台连续 ≥20s → 切回立刻刷一次；<20s 的短切不强刷、不累计
   // 右侧设备/用量：无固定间隔，按时机事件触发——

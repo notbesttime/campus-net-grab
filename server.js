@@ -16,10 +16,12 @@ const { resolveUnbindTarget } = require('./lib/unbind-target');
 const { createUserWaiter, CANCELLED } = require('./lib/user-waiter');
 const { writeFileAtomic, parseVaultText } = require('./lib/file-store');
 const { tcpProbe } = require('./lib/net-probe');
+const { applyNote, parseNotesText } = require('./lib/ip-notes');
 
 const PORT_START = 8787;
 const ROOT = __dirname;
 const VAULT_FILE = path.join(ROOT, 'vault.json');
+const IP_NOTES_FILE = path.join(ROOT, 'ip-notes.json');
 const SESSION_FILE = path.join(ROOT, '.selfsession');
 const DIAG_DIR = path.join(ROOT, 'diag');
 const CONSOLE_URL_FILE = path.join(ROOT, 'console.url');
@@ -233,6 +235,40 @@ function vaultPublic() {
 }
 
 const accountById = id => vault.accounts.find(a => a.id === id) || null;
+
+/* ---------------- IP 备注（ip-notes.json） ----------------
+ * 给「各 IP 用量」里的地址起名字，并同步显示到「绑定设备」表。
+ * 不加密：不是敏感数据；但属于用户数据，所以放服务端文件而不是 localStorage——
+ * 控制台 origin 含端口，8787 被占用换端口启动时 localStorage 会整体「看不见」。
+ */
+let ipNotes = {};
+
+function loadIpNotes() {
+  let raw;
+  try {
+    raw = fs.readFileSync(IP_NOTES_FILE, 'utf8');
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.error('读取 IP 备注失败:', e.message);
+    return; // 首次运行没有文件是正常的
+  }
+  if (!String(raw).trim()) return;
+  const parsed = parseNotesText(raw);
+  if (Object.keys(parsed).length) { ipNotes = parsed; return; }
+  // 文件非空但解析不出任何有效条目 → 视为损坏：改名留证，别让下一次保存覆盖证据
+  const bad = IP_NOTES_FILE + '.bad-' + Date.now();
+  try {
+    fs.renameSync(IP_NOTES_FILE, bad);
+    console.error('IP 备注文件损坏，已备份为 ' + path.basename(bad) + '；备注已重置为空');
+  } catch (e2) {
+    console.error('IP 备注文件损坏且备份失败:', e2.message);
+  }
+}
+
+function saveIpNotes() {
+  const wr = writeFileAtomic(IP_NOTES_FILE, JSON.stringify(ipNotes, null, 2), 'utf8');
+  if (!wr.ok) console.error('保存 IP 备注失败:', wr.error);
+  return wr.ok;
+}
 
 function passwordOf(acc) {
   if (!acc || !acc.enc) return null;
@@ -2516,6 +2552,16 @@ async function handleApi(req, res, pathname, query) {
 
   try {
     switch (pathname) {
+      case '/api/ipnotes': {
+        // GET：读取全部备注；POST：{ ip, note } 写入（note 为空 = 删除）
+        if (req.method === 'GET') return json(res, 200, { ok: true, notes: ipNotes });
+        const b = await readBody(req);
+        const next = applyNote(ipNotes, b.ip, b.note);
+        const prev = ipNotes;
+        ipNotes = next;
+        if (!saveIpNotes()) { ipNotes = prev; return json(res, 500, { error: '备注保存失败（磁盘写入错误）' }); }
+        return json(res, 200, { ok: true, notes: ipNotes });
+      }
       case '/api/status': {
         const [st, nc] = await Promise.all([
           portalStatus().catch(e => ({ online: false, error: e.message })),
@@ -2875,4 +2921,5 @@ setInterval(() => {
 
 process.on('unhandledRejection', e => console.error('[unhandledRejection]', e));
 loadVault();
+loadIpNotes();
 startServer(PORT_START);

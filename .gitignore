@@ -24,3 +24,7 @@ _shim*.bat
 
 # WorkBuddy 工作区数据（记忆/笔记，不进仓库）
 .workbuddy/
+
+# IP 备注（设备别名，属个人数据）
+ip-notes.json
+ip-notes.json.bad-*
