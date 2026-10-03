@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>校园网抢抢抢 · 控制台</title>
   <link rel="icon" href="data:,">
+  <!-- 主题需在样式加载前就位，避免刷新时闪一帧默认深色 -->
+  <script>
+    (function () {
+      var t = null;
+      try { t = localStorage.getItem('cnal_theme'); } catch (e) {}
+      if (['dark', 'light', 'paper', 'mica'].indexOf(t) < 0) t = 'dark';
+      document.documentElement.setAttribute('data-theme', t);
+    })();
+  </script>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -190,27 +199,47 @@
       <div class="card">
         <div class="card-head"><h2>设置</h2></div>
 
-        <div class="set-row">
-          <span class="set-label">校园 WiFi</span>
-          <select id="wifiProfiles" class="select small"></select>
-          <button id="btnWifiConnect" class="btn ghost" type="button">连接</button>
-          <button id="btnWifiRestore" class="btn ghost hidden" type="button" title="切回本次抢网前所在的网络">切回原网络</button>
+        <div class="set-group">
+          <div class="set-group-title">页面</div>
+          <div class="set-row">
+            <span class="set-label">主题外观（自动记忆）</span>
+            <div class="theme-swatches" id="themeSwatches" role="group" aria-label="选择主题外观">
+              <button class="theme-swatch" data-theme="dark" type="button" aria-pressed="true"><span class="ts-preview"></span>深色</button>
+              <button class="theme-swatch" data-theme="light" type="button" aria-pressed="false"><span class="ts-preview"></span>浅色</button>
+              <button class="theme-swatch" data-theme="paper" type="button" aria-pressed="false"><span class="ts-preview"></span>稿纸</button>
+              <button class="theme-swatch" data-theme="mica" type="button" aria-pressed="false"><span class="ts-preview"></span>云母</button>
+            </div>
+          </div>
         </div>
-        <div class="set-row">
-          <span class="set-label">一键抢网时自动连接校园 WiFi（HNIST-student）</span>
-          <label class="switch"><input type="checkbox" id="ckAutoWifi" checked><span></span></label>
+
+        <div class="set-group">
+          <div class="set-group-title">连接与网络</div>
+          <div class="set-row">
+            <span class="set-label">校园 WiFi</span>
+            <select id="wifiProfiles" class="select small"></select>
+            <button id="btnWifiConnect" class="btn ghost" type="button">连接</button>
+            <button id="btnWifiRestore" class="btn ghost hidden" type="button" title="切回本次抢网前所在的网络">切回原网络</button>
+          </div>
+          <div class="set-row">
+            <span class="set-label">一键抢网时自动连接校园 WiFi（HNIST-student）</span>
+            <label class="switch"><input type="checkbox" id="ckAutoWifi" checked><span></span></label>
+          </div>
+          <div class="set-row">
+            <span class="set-label">诊断模式（抓取后台页面用于接口分析）</span>
+            <label class="switch"><input type="checkbox" id="ckDiag"><span></span></label>
+          </div>
         </div>
-        <div class="set-row">
-          <span class="set-label">诊断模式（抓取后台页面用于接口分析）</span>
-          <label class="switch"><input type="checkbox" id="ckDiag"><span></span></label>
+
+        <div class="set-group">
+          <div class="set-group-title">维护</div>
+          <div class="set-row actions">
+            <button id="btnSelfLogout" class="btn ghost" type="button" title="注销后台登录占用（为在此查看/解绑设备、显示各 IP 用量统计），不影响正常上网">注销自助后台</button>
+            <button id="btnLogout" class="btn ghost" type="button" title="注销网络认证会话：会断开上网，需重新一键抢网">注销上网(门户)</button>
+            <button id="btnDiagClear" class="btn ghost" type="button">清除诊断信息</button>
+            <button id="btnClearPw" class="btn ghost" type="button">清除所有保存的密码</button>
+          </div>
+          <div class="hint">“诊断信息”是 diag 文件夹里的后台页面快照，仅用于解析问题排查；删除不影响账号、密码和任何功能（平时自动只留最近 20 个）。</div>
         </div>
-        <div class="set-row actions">
-          <button id="btnSelfLogout" class="btn ghost" type="button" title="注销后台登录占用（为在此查看/解绑设备、显示各 IP 用量统计），不影响正常上网">注销自助后台</button>
-          <button id="btnLogout" class="btn ghost" type="button" title="注销网络认证会话：会断开上网，需重新一键抢网">注销上网(门户)</button>
-          <button id="btnDiagClear" class="btn ghost" type="button">清除诊断信息</button>
-          <button id="btnClearPw" class="btn ghost" type="button">清除所有保存的密码</button>
-        </div>
-        <div class="hint">“诊断信息”是 diag 文件夹里的后台页面快照，仅用于解析问题排查；删除不影响账号、密码和任何功能（平时自动只留最近 20 个）。</div>
         <div id="wifiHint" class="hint"></div>
       </div>
     </section>

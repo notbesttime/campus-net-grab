@@ -1155,8 +1155,32 @@ async function liteConnect(acc, password) {
   }
 }
 
+/* ---------------- 主题外观 ---------------- */
+const THEMES = ['dark', 'light', 'paper', 'mica'];
+function setTheme(name, persist) {
+  if (!THEMES.includes(name)) name = 'dark';
+  document.documentElement.setAttribute('data-theme', name);
+  if (persist) {
+    try { localStorage.setItem('cnal_theme', name); } catch {}
+  }
+  document.querySelectorAll('#themeSwatches .theme-swatch').forEach((b) => {
+    b.setAttribute('aria-pressed', String(b.dataset.theme === name));
+  });
+}
+
 /* ---------------- 事件绑定 ---------------- */
 function bindEvents() {
+  const sw = $('themeSwatches');
+  if (sw) {
+    sw.querySelectorAll('.theme-swatch').forEach((b) => {
+      b.onclick = () => {
+        setTheme(b.dataset.theme, true);
+        toast('外观已切换：' + b.textContent.trim(), 'ok');
+      };
+    });
+    // head 内联脚本已提前上主题，这里只同步色卡选中态
+    setTheme(document.documentElement.getAttribute('data-theme') || 'dark', false);
+  }
   $('btnMask').onclick = () => {
     state.masked = !state.masked;
     document.body.classList.toggle('masked', state.masked);
