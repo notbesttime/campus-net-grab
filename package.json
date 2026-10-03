@@ -1,0 +1,21 @@
+{
+  "name": "hnist-campus-net",
+  "version": "1.0.0",
+  "private": true,
+  "description": "湖南理工学院 Dr.COM / 哆点校园网一键认证工具：本地 Node 服务 + 网页控制台",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "drcom",
+    "campus-network",
+    "captive-portal",
+    "hnist",
+    "windows"
+  ]
+}

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>校园网抢抢抢 · 控制台</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo-dot" aria-hidden="true"></span>
+      <h1>校园网抢抢抢</h1>
+      <span class="sub">Dr.COM 认证助手</span>
+    </div>
+    <div class="top-right">
+      <button id="btnMask" class="iconbtn" type="button" title="隐藏/显示账号信息" aria-label="隐藏或显示账号信息">
+        <svg class="eye-open" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"></path>
+          <circle cx="12" cy="12" r="3"></circle>
+        </svg>
+        <svg class="eye-shut" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"></path>
+          <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"></path>
+          <path d="M1 1l22 22"></path>
+        </svg>
+      </button>
+      <button id="btnTermLog" class="iconbtn" type="button" title="显示/隐藏终端日志（本地服务）" aria-label="显示或隐藏终端日志">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+          <path d="M7 9l3 3-3 3M12 15h5"></path>
+        </svg>
+      </button>
+      <span id="modeBadge" class="badge">检测运行模式…</span>
+      <span id="netBadge" class="badge net unknown">状态未知</span>
+    </div>
+  </header>
+
+  <div id="globalBanner" class="banner hidden"></div>
+
+  <!-- 终端日志面板（打包后无黑窗时查看本地服务输出） -->
+  <div id="termLogPanel" class="termpanel hidden">
+    <div class="termpanel-head">
+      <span>终端日志 · 本地服务</span>
+      <div class="termpanel-acts">
+        <button id="btnTermLogClear" class="btn ghost tiny" type="button">清空显示</button>
+        <button id="btnTermLogClose" class="btn ghost tiny" type="button">关闭</button>
+      </div>
+    </div>
+    <div id="termLogBody" class="log termbody" aria-live="polite"></div>
+    <div id="termLogHint" class="hint">约 2 秒自动追加；任务流水请看左侧「抢网日志」。</div>
+  </div>
+
+  <main class="layout">
+    <!-- 左列：抢网 + 状态 -->
+    <section class="col col-left">
+      <div class="card">
+        <div class="card-head">
+          <h2>一键抢网</h2>
+          <button id="btnRefresh" class="btn ghost" type="button">刷新状态</button>
+        </div>
+        <div class="account-row">
+          <label class="flabel" for="accountSelect">使用账号</label>
+          <select id="accountSelect" class="select secret"></select>
+          <button id="btnConnect" class="btn primary big" type="button">一键抢网</button>
+          <button id="btnOpenPortal" class="btn ghost" type="button" title="手动打开门户登录页兜底；正常请用一键抢网自动填密">门户登录页</button>
+        </div>
+
+        <div class="pipeline secret" id="pipeline">
+          <div class="step" data-step="detect">
+            <div class="dot"></div>
+            <div class="sname">检测网络</div>
+            <div class="snote"></div>
+          </div>
+          <div class="step" data-step="precheck">
+            <div class="dot"></div>
+            <div class="sname">预检占用</div>
+            <div class="snote"></div>
+          </div>
+          <div class="step" data-step="unbind">
+            <div class="dot"></div>
+            <div class="sname">解绑设备</div>
+            <div class="snote"></div>
+          </div>
+          <div class="step" data-step="portal">
+            <div class="dot"></div>
+            <div class="sname">门户登录</div>
+            <div class="snote"></div>
+          </div>
+          <div class="step" data-step="verify">
+            <div class="dot"></div>
+            <div class="sname">验证联网</div>
+            <div class="snote"></div>
+          </div>
+        </div>
+
+        <div id="pauseBanner" class="banner warn hidden"></div>
+        <div class="log secret" id="log" aria-live="polite"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>当前状态</h2></div>
+        <div class="kv-grid" id="statusGrid">
+          <div class="kv"><span class="k">在线状态</span><span class="v" id="stOnline">—</span></div>
+          <div class="kv"><span class="k">认证账号</span><span class="v mono secret" id="stUid">—</span></div>
+          <div class="kv"><span class="k">本机 IP</span><span class="v mono" id="stIp">—</span></div>
+          <div class="kv"><span class="k">在线时长</span><span class="v mono" id="stTime">—</span></div>
+          <div class="kv"><span class="k">已用流量</span><span class="v mono" id="stFlow">—</span></div>
+          <div class="kv"><span class="k">测试网址</span><span class="v" id="stNcsi">—</span></div>
+        </div>
+        <div class="hint" id="stRefresh">上次刷新：—</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>当前账号的各 IP 用量</h2>
+          <button id="btnUsageRefresh" class="btn ghost" type="button">加载</button>
+        </div>
+        <div id="usageGrid" class="usage-grid"></div>
+        <div id="usageHint" class="hint">按账号从自助系统的上网记录统计（范围以查询页为准）。首次加载需登录自助服务。</div>
+      </div>
+    </section>
+
+    <!-- 右列：账号簿 / 设备 / 设置 -->
+    <section class="col col-right">
+      <div class="card">
+        <div class="card-head">
+          <h2>账号簿</h2>
+          <button id="btnAddAcct" class="btn ghost" type="button">添加账号</button>
+        </div>
+
+        <form id="acctForm" class="form hidden secret">
+          <input type="hidden" id="fId">
+          <div class="frow">
+            <label for="fUsername">账号</label>
+            <input id="fUsername" type="text" autocomplete="off" placeholder="校园网账号" required>
+          </div>
+          <div class="frow">
+            <label for="fSuffix">服务商后缀</label>
+            <input id="fSuffix" type="text" list="suffixList" placeholder="留空 = 校园用户">
+            <datalist id="suffixList">
+              <option value=""></option>
+              <option value="@dx">校园电信</option>
+              <option value="@lt">校园联通</option>
+              <option value="@cmcc">校园移动</option>
+            </datalist>
+          </div>
+          <div class="frow">
+            <label for="fRemark">备注</label>
+            <input id="fRemark" type="text" placeholder="例如：自己的号 / 室友号">
+          </div>
+          <div class="frow">
+            <label for="fPassword">密码</label>
+            <input id="fPassword" type="password" autocomplete="new-password" placeholder="留空 = 不修改">
+          </div>
+          <label class="checkline">
+            <input type="checkbox" id="fRemember" checked>
+            <span>保存到本机（Windows 加密，转发后无法解密）</span>
+          </label>
+          <div class="frow btnrow">
+            <button class="btn primary" type="submit">保存</button>
+            <button class="btn ghost" type="button" id="btnAcctCancel">取消</button>
+          </div>
+        </form>
+
+        <ul id="acctList" class="acct-list secret"></ul>
+        <div id="acctEmpty" class="hint">还没有账号，点右上角“添加账号”。</div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>绑定设备</h2>
+          <div class="btn-group">
+            <button id="btnDevRefresh" class="btn ghost" type="button">刷新</button>
+            <a id="lnkSelf" class="btn ghost" href="http://172.31.8.43:8080/Self/" target="_blank" rel="noopener">打开后台</a>
+          </div>
+        </div>
+        <table class="dev-table">
+          <thead>
+            <tr><th>类型</th><th>设备</th><th>IP</th><th>操作</th></tr>
+          </thead>
+          <tbody id="devBody">
+            <tr><td colspan="4" class="hintcell">未登录自助服务，点“刷新”加载。</td></tr>
+          </tbody>
+        </table>
+        <div id="devHint" class="hint"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h2>设置</h2></div>
+
+        <div class="set-row">
+          <span class="set-label">校园 WiFi</span>
+          <select id="wifiProfiles" class="select small"></select>
+          <button id="btnWifiConnect" class="btn ghost" type="button">连接</button>
+          <button id="btnWifiRestore" class="btn ghost hidden" type="button" title="切回本次抢网前所在的网络">切回原网络</button>
+        </div>
+        <div class="set-row">
+          <span class="set-label">一键抢网时自动连接校园 WiFi（HNIST-student）</span>
+          <label class="switch"><input type="checkbox" id="ckAutoWifi" checked><span></span></label>
+        </div>
+        <div class="set-row">
+          <span class="set-label">诊断模式（抓取后台页面用于接口分析）</span>
+          <label class="switch"><input type="checkbox" id="ckDiag"><span></span></label>
+        </div>
+        <div class="set-row actions">
+          <button id="btnSelfLogout" class="btn ghost" type="button" title="注销后台登录占用（为在此查看/解绑设备、显示各 IP 用量统计），不影响正常上网">注销自助后台</button>
+          <button id="btnLogout" class="btn ghost" type="button" title="注销网络认证会话：会断开上网，需重新一键抢网">注销上网(门户)</button>
+          <button id="btnDiagClear" class="btn ghost" type="button">清除诊断信息</button>
+          <button id="btnClearPw" class="btn ghost" type="button">清除所有保存的密码</button>
+        </div>
+        <div class="hint">“诊断信息”是 diag 文件夹里的后台页面快照，仅用于解析问题排查；删除不影响账号、密码和任何功能（平时自动只留最近 20 个）。</div>
+        <div id="wifiHint" class="hint"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 弹窗：有人在使用 -->
+  <div id="modalDecision" class="modal hidden">
+    <div class="mbox">
+      <h3 id="decTitle">该账号当前有其他设备在使用</h3>
+      <div id="decList" class="dec-list"></div>
+      <p class="dec-tip">建议先与他人确认是否还需要该设备，再决定是否继续。</p>
+      <div class="mrow">
+        <button id="btnDecContinue" class="btn primary" type="button">继续登入</button>
+        <button id="btnDecPause" class="btn ghost" type="button">询问他人</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 弹窗：输入密码 -->
+  <div id="modalPassword" class="modal hidden">
+    <div class="mbox">
+      <h3 id="pwTitle" class="secret">输入密码</h3>
+      <div class="frow">
+        <label for="pwInput">密码</label>
+        <input id="pwInput" type="password" autocomplete="current-password">
+      </div>
+      <label class="checkline">
+        <input type="checkbox" id="pwRemember" checked>
+        <span>保存到本机（Windows 加密）</span>
+      </label>
+      <div class="mrow">
+        <button id="btnPwOk" class="btn primary" type="button">确定</button>
+        <button id="btnPwCancel" class="btn ghost" type="button">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 弹窗：验证码 -->
+  <div id="modalCaptcha" class="modal hidden">
+    <div class="mbox">
+      <h3>输入验证码</h3>
+      <p class="dec-tip">自助服务需要验证码，请按图输入。</p>
+      <div class="captcha-row">
+        <img id="capImg" alt="验证码">
+        <input id="capInput" type="text" maxlength="6" autocomplete="off" placeholder="验证码">
+      </div>
+      <div class="mrow">
+        <button id="btnCapOk" class="btn primary" type="button">确定</button>
+        <button id="btnCapCancel" class="btn ghost" type="button">取消抢网</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+  <script src="app.js"></script>
+</body>
+</html>

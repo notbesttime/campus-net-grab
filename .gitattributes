@@ -1,0 +1,15 @@
+# 换行符策略（gitattributes 中最后一条匹配的规则生效）
+#
+# 关键：Windows 批处理必须是 CRLF。cmd.exe 遇到 LF 换行的 .bat 会解析出错，
+# 而 .bat 里的内容一旦被误解析，可能被当成命令执行（本项目踩过这个坑）。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制文件不做换行转换
+*.png binary
+*.jpg binary
+*.ico binary
+*.exe binary
+*.bin binary
+*.tpz binary

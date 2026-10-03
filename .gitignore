@@ -1,0 +1,26 @@
+# ---- 敏感数据：绝不提交（见 AI_PROJECT_CONTEXT.md §9 开发纪律）----
+# 账号簿 + DPAPI 密文 + 真实学号
+vault.json
+vault.json.bad-*
+# 自助后台会话（含真实学号与密文特征）
+.selfsession
+# 含本次随机令牌
+console.url
+# 抢网任务事件日志（含学号、MAC、手机号）
+job_last.log
+
+# 门户/自助页面诊断快照：含真实学号、手机号、设备信息
+diag/
+
+# 研究过程记录：含真实学号与门户页面快照，需要哪个脚本请单独挑出来提交
+研究记录/
+
+# ---- 本地产物 ----
+# writeFileAtomic 的临时文件
+*.tmp-*
+.*.tmp-*
+# 测试用的临时启动脚本
+_shim*.bat
+
+# WorkBuddy 工作区数据（记忆/笔记，不进仓库）
+.workbuddy/
