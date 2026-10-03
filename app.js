@@ -31,6 +31,12 @@ const state = {
   lastUsage: null,       // 最近一次用量结果（改备注后原地重渲染）
   lastDevices: null,     // 最近一次设备列表（同上）
   lastEndpoints: null,
+  netcheckOn: false,     // 网络检测总开关（localStorage 记忆，默认关）
+  netBusy: false,        // 正在跑一次检测
+  netTimer: null,        // 自动重测定时器
+  netRetryTimer: null,   // 撞上重型请求时的延后重试
+  netRetryCount: 0,      // 本轮已延后次数（防止无限推迟）
+  heavyBusy: 0,          // 自助后台重型请求在途计数（见 api()）
 };
 
 const STATUS_INTERVAL_MS = 60000;      // 前台自动探测门户状态
@@ -63,6 +69,8 @@ function onVisibilityChange() {
       state.statusPendingRefresh = false;
       if (!state.running) refreshStatus(true);
     }
+    // 离开期间定时器空转（runNetcheck 会跳过隐藏页），切回来补一次新的
+    if (state.netcheckOn) runNetcheck();
   }
 }
 
@@ -214,24 +222,33 @@ function bindTermLogUI() {
 }
 
 async function api(path, body, method) {
-  const opt = {
-    method: method || (body ? 'POST' : 'GET'),
-    headers: { 'x-token': state.token || '' },
-  };
-  if (body) {
-    opt.headers['Content-Type'] = 'application/json';
-    opt.body = JSON.stringify(body);
+  // 自助后台的请求（会话/登录/设备/用量/解绑）都是「重型」的：网络检测必须避开它们，
+  // 否则自家请求会把延迟与抖动一起顶上去。实测同一台机器同一时刻：
+  // 与用量查询并发时国内延迟 158ms、抖动 337ms；错开后 37ms、8ms。
+  const heavy = String(path).startsWith('/api/self/');
+  if (heavy) state.heavyBusy++;
+  try {
+    const opt = {
+      method: method || (body ? 'POST' : 'GET'),
+      headers: { 'x-token': state.token || '' },
+    };
+    if (body) {
+      opt.headers['Content-Type'] = 'application/json';
+      opt.body = JSON.stringify(body);
+    }
+    const r = await fetch(path, opt);
+    let data = null;
+    try { data = await r.json(); } catch {}
+    if (!r.ok) {
+      const e = new Error((data && data.error) || 'HTTP ' + r.status);
+      e.status = r.status;
+      e.data = data;
+      throw e;
+    }
+    return data;
+  } finally {
+    if (heavy) state.heavyBusy--;
   }
-  const r = await fetch(path, opt);
-  let data = null;
-  try { data = await r.json(); } catch {}
-  if (!r.ok) {
-    const e = new Error((data && data.error) || 'HTTP ' + r.status);
-    e.status = r.status;
-    e.data = data;
-    throw e;
-  }
-  return data;
 }
 
 function jsonp(url) {
@@ -1240,6 +1257,179 @@ function setUsageOpen(open, persist) {
   if (persist) localStorage.setItem('cnal_usageOpen', state.usageOpen ? '1' : '0');
 }
 
+/* ---------------- 网络检测（P2：延迟 / 抖动 / DNS / 首字节） ----------------
+ * 默认关闭，打开后才产生探测。间隔与状态探测同量级（60s），但单次检测本身要跑 5~8 秒
+ * （国外链路慢时更久），所以三条刹车：页面隐藏不跑、抢网运行中不跑、上一次没跑完不叠加。
+ * 结果只留在内存与页面，不落盘。
+ */
+const NETCHECK_INTERVAL_MS = 60000;
+const NET_GRADE_TEXT = { excellent: '优秀', good: '良好', fair: '一般', poor: '较差' };
+const NET_GRADE_RANK = { excellent: 3, good: 2, fair: 1, poor: 0, unknown: -1 };
+
+function setNetcheck(on, persist) {
+  state.netcheckOn = !!on;
+  if ($('ckNetcheck')) $('ckNetcheck').checked = state.netcheckOn;
+  if ($('netBody')) $('netBody').classList.toggle('hidden', !state.netcheckOn);
+  if ($('netIdle')) $('netIdle').classList.toggle('hidden', state.netcheckOn);
+  stopNetTimer();
+  if (state.netcheckOn) {
+    loadNetIdentity(); // 先把「当前检测的是哪个网络」显示出来，别让用户盯着「—」等好几秒
+    runNetcheck();     // 打开就立刻跑一次，别让用户干等一个间隔
+    state.netTimer = setInterval(() => runNetcheck(), NETCHECK_INTERVAL_MS);
+  }
+  if (persist) localStorage.setItem('cnal_netcheck', state.netcheckOn ? '1' : '0');
+}
+
+/** 只读接口：拿网络身份与上次结果，不触发任何探测 */
+async function loadNetIdentity() {
+  if (state.mode !== 'server') return;
+  try {
+    const r = await api('/api/netcheck');
+    if (r && r.result) renderNetcheck(r);
+    else if (r && r.network) renderNetWho(r.network);
+  } catch { /* 身份取不到不影响检测本身 */ }
+}
+
+function stopNetTimer() {
+  if (state.netTimer) { clearInterval(state.netTimer); state.netTimer = null; }
+  if (state.netRetryTimer) { clearTimeout(state.netRetryTimer); state.netRetryTimer = null; }
+  state.netRetryCount = 0;
+}
+
+/** 撞上重型请求就稍后再试，而不是直接丢掉这一轮 */
+function scheduleNetRetry() {
+  if (state.netRetryTimer) return;
+  if (state.netRetryCount >= 8) return; // 最多推迟 8 次（约 24 秒）就先放弃，等下一个间隔
+  state.netRetryCount++;
+  state.netRetryTimer = setTimeout(() => {
+    state.netRetryTimer = null;
+    runNetcheck();
+  }, 3000);
+}
+
+async function runNetcheck() {
+  if (!state.netcheckOn || state.mode !== 'server') return;
+  if (state.netBusy || state.running || document.hidden) return;
+  // 自助后台正在跑（会话/登录/设备/用量）时先不测：这时候测出来的延迟和抖动
+  // 是自家请求挤出来的假数字，宁可延后几秒也不要给一个误导的结论。
+  if (state.heavyBusy > 0) { scheduleNetRetry(); return; }
+  state.netRetryCount = 0;
+  state.netBusy = true;
+  const btn = $('btnNetRun');
+  if (btn) { btn.disabled = true; btn.textContent = '检测中…'; }
+  try {
+    renderNetcheck(await api('/api/netcheck', {}));
+  } catch (e) {
+    toast('网络检测失败：' + e.message, 'err');
+  } finally {
+    state.netBusy = false;
+    if (btn) { btn.disabled = false; btn.textContent = '立即检测'; }
+  }
+}
+
+/** 一格数据：数值 + 档位；拿不到数值时显示传入的失败文案 */
+function netCell(el, ms, g, failText) {
+  if (!el) return;
+  el.innerHTML = '';
+  const v = document.createElement('span');
+  v.className = 'nv';
+  if (typeof ms === 'number' && isFinite(ms)) {
+    v.textContent = ms + 'ms';
+  } else {
+    v.textContent = failText || '—';
+    v.classList.add('bad');
+  }
+  el.appendChild(v);
+  if (g && g !== 'unknown' && NET_GRADE_TEXT[g]) {
+    const s = document.createElement('span');
+    s.className = 'ng ' + g;
+    s.textContent = NET_GRADE_TEXT[g];
+    el.appendChild(s);
+  }
+}
+
+/** 小字：当前检测的是哪个网络 —— 这就是「不止检测校园网」的落点 */
+function renderNetWho(n) {
+  const el = $('netWho');
+  if (!el) return;
+  el.innerHTML = '';
+  if (!n) { el.textContent = '当前检测：—'; return; }
+  const name = n.ssid || (n.type === '未连接' ? '未连接网络' : n.type);
+  const l1 = document.createElement('div');
+  l1.appendChild(document.createTextNode('当前检测：'));
+  const b = document.createElement('b');
+  b.textContent = name;
+  l1.appendChild(b);
+  l1.appendChild(document.createTextNode('（' + n.kind + ' · ' + n.type + '）'));
+  el.appendChild(l1);
+  if (n.ip) {
+    const l2 = document.createElement('div');
+    l2.className = 'nw-sub';
+    l2.textContent = '本机 ' + n.ip + (n.iface ? ' · 网卡 ' + n.iface : '');
+    el.appendChild(l2);
+  }
+}
+
+function renderNetcheck(payload) {
+  const r = (payload && payload.result) || null;
+  renderNetWho((payload && payload.network) || (r && r.network) || null);
+  if (!r || !r.groups) return;
+  const dom = r.groups.domestic || {};
+  const frn = r.groups.foreign || {};
+  const lat = g => (g.latency || {});
+  const failOf = (latency) => (latency.timeout ? '超时' : '—');
+
+  netCell($('netLatDom'), lat(dom).avg, lat(dom).grade, failOf(lat(dom)));
+  netCell($('netLatFor'), lat(frn).avg, lat(frn).grade, failOf(lat(frn)));
+  netCell($('netJitDom'), lat(dom).jitter, null, '—');
+  netCell($('netJitFor'), lat(frn).jitter, null, '—');
+  const dnsFail = d => ((d || {}).skipped ? '—' : '失败');
+  netCell($('netDnsDom'), (dom.dns || {}).avg, (dom.dns || {}).grade, dnsFail(dom.dns));
+  netCell($('netDnsFor'), (frn.dns || {}).avg, (frn.dns || {}).grade, dnsFail(frn.dns));
+  const ttf = (g) => {
+    const t = g.ttfb || {};
+    return {
+      ms: t.ms,
+      grade: t.error ? 'unknown' : t.grade,
+      fail: t.skipped ? '—' : (t.error === '超时' ? '超时' : '失败'),
+    };
+  };
+  const td = ttf(dom), tf = ttf(frn);
+  netCell($('netTtfbDom'), td.ms, td.grade, td.fail);
+  netCell($('netTtfbFor'), tf.ms, tf.grade, tf.fail);
+
+  // 综合结论：报出最弱的那一项，光给个总评看不出该查什么
+  const verdict = $('netVerdict');
+  if (verdict) {
+    verdict.className = 'net-verdict ' + (r.grade || 'unknown');
+    const items = [];
+    for (const [key, label] of [['domestic', '国内'], ['foreign', '国外']]) {
+      const g = r.groups[key] || {};
+      items.push([label + '延迟', lat(g).grade]);
+      items.push([label + '首字节', (g.ttfb || {}).grade]);
+    }
+    const worst = items
+      .filter(([, g]) => g && g !== 'unknown')
+      .reduce((a, b) => (NET_GRADE_RANK[b[1]] < NET_GRADE_RANK[a[1]] ? b : a), ['', 'excellent']);
+    verdict.textContent = '综合：' + (NET_GRADE_TEXT[r.grade] || '—')
+      + (worst[0] ? '（最弱：' + worst[0] + ' ' + (NET_GRADE_TEXT[worst[1]] || '') + '）' : '');
+  }
+
+  const at = $('netAt');
+  if (at && r.at) {
+    const d = new Date(r.at);
+    const p = n => String(n).padStart(2, '0');
+    at.textContent = '上次：' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+  }
+  const detail = $('netDetail');
+  if (detail) {
+    const names = k => (lat(r.groups[k]).targets || []).map(t => t.name).join('/') || '—';
+    detail.textContent = '测点：国内 ' + names('domestic') + ' · 国外 ' + names('foreign')
+      + ' · 用时 ' + (r.durationMs / 1000).toFixed(1) + 's'
+      + (r.truncated ? '（网络太慢，本次提前结束，带「—」的项没测）' : '');
+  }
+}
+
 /* ---------------- 事件绑定 ---------------- */
 function bindEvents() {
   const sw = $('themeSwatches');
@@ -1286,6 +1476,8 @@ function bindEvents() {
   $('btnDevRefresh').onclick = refreshDevices;
   $('btnUsageRefresh').onclick = loadUsage;
   $('btnUsageToggle').onclick = () => setUsageOpen(!state.usageOpen, true);
+  if ($('ckNetcheck')) $('ckNetcheck').onchange = () => setNetcheck($('ckNetcheck').checked, true);
+  if ($('btnNetRun')) $('btnNetRun').onclick = () => runNetcheck();
   $('accountSelect').onchange = () => autoLoadForAccount();
   $('btnSelfLogout').onclick = async () => {
     if (!confirm(
@@ -1429,6 +1621,8 @@ async function init() {
   document.body.classList.toggle('masked', state.masked);
   // 用量卡折叠状态：默认收起（保证一屏装下），用户选择会被记住
   setUsageOpen(localStorage.getItem('cnal_usageOpen') === '1', false);
+  // 网络检测：默认关闭，只有用户点开才会产生探测；开关状态被记住
+  setNetcheck(localStorage.getItem('cnal_netcheck') === '1', false);
   bindEvents();
   bindTermLogUI();
 
@@ -1468,7 +1662,7 @@ async function init() {
     b.textContent = '当前为轻量模式：双击启动本地服务（启动校园网助手.bat）可解锁自动解绑、设备管理与密码加密保存。';
     b.className = 'banner';
     b.classList.remove('hidden');
-    for (const id of ['btnDevRefresh', 'btnUsageRefresh', 'btnWifiConnect', 'btnWifiRestore', 'ckDiag', 'btnDiagClear', 'btnClearPw', 'btnLogout', 'btnSelfLogout', 'btnTermLog']) {
+    for (const id of ['btnDevRefresh', 'btnUsageRefresh', 'btnWifiConnect', 'btnWifiRestore', 'ckDiag', 'btnDiagClear', 'btnClearPw', 'btnLogout', 'btnSelfLogout', 'btnTermLog', 'ckNetcheck', 'btnNetRun']) {
       const el = $(id);
       if (el) { el.disabled = true; el.title = '需要启动本地服务'; }
     }
@@ -1477,7 +1671,12 @@ async function init() {
   await refreshAccounts();
   await refreshStatus(true);
   log(state.mode === 'server' ? '控制台已就绪（完整模式）' : '控制台已就绪（轻量模式）', 'hi');
-  if (state.mode === 'server') { autoLoadForAccount(); loadIpNotes(); }
+  if (state.mode === 'server') {
+    autoLoadForAccount();
+    loadIpNotes();
+    // 上一次已把网络检测开着的话，现在才真正跑第一次（init 早期 mode 还没定，会被守卫拦掉）
+    if (state.netcheckOn) runNetcheck();
+  }
   // 状态：前台每 60s 轻量探测（门户+NCSI，仅 2 次请求）
   // 离开控制台连续 ≥20s → 切回立刻刷一次；<20s 的短切不强刷、不累计
   // 右侧设备/用量：无固定间隔，按时机事件触发——

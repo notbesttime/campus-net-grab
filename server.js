@@ -17,6 +17,7 @@ const { createUserWaiter, CANCELLED } = require('./lib/user-waiter');
 const { writeFileAtomic, parseVaultText } = require('./lib/file-store');
 const { tcpProbe } = require('./lib/net-probe');
 const { applyNote, parseNotesText } = require('./lib/ip-notes');
+const { runCheck: runNetCheck } = require('./lib/net-quality');
 
 const PORT_START = 8787;
 const ROOT = __dirname;
@@ -64,6 +65,8 @@ const CFG = {
   self: 'http://172.31.8.43:8080',
   ncsi: 'http://www.msftconnecttest.com/connecttest.txt',
 };
+// 校园网 SSID：单一来源，抢网切网与「网络检测」的网络身份判定共用同一个值
+const CAMPUS_SSID = 'HNIST-student';
 
 /* ---------------- 基础工具 ---------------- */
 const now = () => Date.now();
@@ -562,7 +565,7 @@ let lastWifiSwitch = null;
 async function ensureCampusWifi(log, opts) {
   const say = m => { try { log && log(m); } catch {} };
   const allowSwitch = !!(opts && opts.allowSwitch);
-  const CAMPUS = 'HNIST-student';
+  const CAMPUS = CAMPUS_SSID;
   const portalProbe = async () => {
     const mac = localMacHex() || '000000000000';
     try {
@@ -2003,6 +2006,50 @@ function wifiInfo() {
   }
 }
 
+/* ---------------- 当前网络身份（网络检测用） ----------------
+ * 刻意**不依赖校园门户**：校外、有线、热点都要能准确说出「现在测的是哪个网络」。
+ * 因此本机 IP 走系统网卡（os.networkInterfaces），而不是门户返回的 portal.ip
+ * —— 后者只在校园网内可达，一离开校园网就永远是「—」。
+ */
+function classifyNetwork(ssid) {
+  if (!ssid) return { campus: false, kind: '未连接 WiFi' };
+  if (ssid === CAMPUS_SSID) return { campus: true, kind: '校园网' };
+  // HNIST 热点 ≠ 校园网：它访问不了校内自助系统，必须区别于 CAMPUS_SSID
+  if (/^HNIST/i.test(ssid)) return { campus: false, kind: '校园热点（不能访校内）' };
+  return { campus: false, kind: '非校园网' };
+}
+
+// 虚拟网卡名字特征：取本机 IP 时要跳过，否则 VMware/WSL 的地址会顶掉真实网卡
+const VIRTUAL_NIC_RE = /vmware|vmnet|virtual|hyper-?v|vethernet|loopback|bluetooth|wsl|tap|tun|zerotier|tailscale/i;
+
+function currentNetwork() {
+  const wifi = wifiInfo();
+  const ssid = wifi.ssid || null;
+  let ip = '', iface = '';
+  try {
+    for (const [name, list] of Object.entries(os.networkInterfaces())) {
+      if (VIRTUAL_NIC_RE.test(name)) continue;
+      for (const a of list || []) {
+        if (a.family !== 'IPv4' || a.internal) continue;
+        if (!ip) { ip = a.address; iface = name; }
+      }
+    }
+  } catch (e) { /* 取不到网卡信息不影响检测本身 */ }
+  const cls = classifyNetwork(ssid);
+  return {
+    ssid,
+    kind: cls.kind,
+    campus: cls.campus,
+    // 有 SSID 就按 WiFi 说；没有 SSID 但拿到 IP，说明走的是有线或其它
+    type: ssid ? 'WiFi' : (ip ? '有线/其它' : '未连接'),
+    ip, iface,
+  };
+}
+
+/* 网络检测（P2）：最近一次结果 + 并发保护。刻意不落盘（见 AI_PROJECT_CONTEXT「网络检测」） */
+let netCheckRunning = false;
+let lastNetCheck = null;
+
 function wifiConnect(name) {
   const r = netsh(['wlan', 'connect', `name=${name}`]);
   const out = ((r.stdout || '') + (r.stderr || '')).trim();
@@ -2561,6 +2608,23 @@ async function handleApi(req, res, pathname, query) {
         ipNotes = next;
         if (!saveIpNotes()) { ipNotes = prev; return json(res, 500, { error: '备注保存失败（磁盘写入错误）' }); }
         return json(res, 200, { ok: true, notes: ipNotes });
+      }
+      case '/api/netcheck': {
+        const network = currentNetwork();
+        // GET：只回网络身份与最近一次结果，不触发任何探测
+        if (req.method === 'GET') {
+          return json(res, 200, { ok: true, network, result: lastNetCheck, running: netCheckRunning });
+        }
+        if (netCheckRunning) return json(res, 429, { ok: false, error: '上一次检测还没跑完，稍等一下再点' });
+        netCheckRunning = true;
+        try {
+          const r = await runNetCheck();
+          // 连网络身份一起存：这份数字是在哪个网络上测出来的，必须跟着数字走
+          lastNetCheck = { ...r, network };
+          return json(res, 200, { ok: true, network, result: lastNetCheck });
+        } finally {
+          netCheckRunning = false;
+        }
       }
       case '/api/status': {
         const [st, nc] = await Promise.all([

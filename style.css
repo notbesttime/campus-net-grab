@@ -425,6 +425,46 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .ip-note-add:hover { color: var(--accent); border-color: var(--accent-dim); }
 .dev-table .ip-note { margin-left: 6px; vertical-align: middle; }
 
+/* ---------- 网络检测 ---------- */
+.net-who { font-size: 13px; color: var(--ink); margin-bottom: 8px; }
+.net-who b { color: var(--accent); }
+.net-who .nw-sub { color: var(--ink-dim); font-size: 12px; margin-top: 2px; }
+.net-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.net-actions #netAt { flex: 1; text-align: right; }
+
+.net-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.net-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink-dim);
+  font-size: 12px;
+  padding: 0 0 6px;
+  border-bottom: 1px solid var(--border);
+}
+.net-table th:not(:first-child), .net-table td:not(:first-child) { text-align: right; }
+.net-table td {
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--border-2);
+  font-family: var(--mono);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.net-table td.k { font-family: inherit; color: var(--ink-dim); }
+.net-table tr:last-child td { border-bottom: 0; }
+.net-table .nv.bad { color: var(--danger); }
+.net-table .ng { margin-left: 6px; font-size: 11px; font-family: inherit; }
+/* 档位配色：优秀/良好走主色，一般走警示色，较差走危险色 */
+.net-table .ng.excellent,
+.net-table .ng.good { color: var(--accent); }
+.net-table .ng.fair { color: var(--warn); }
+.net-table .ng.poor { color: var(--danger); }
+
+.net-verdict { margin-top: 10px; font-size: 13px; color: var(--ink); }
+.net-verdict.excellent, .net-verdict.good { color: var(--accent); }
+.net-verdict.fair { color: var(--warn); }
+.net-verdict.poor { color: var(--danger); }
+#netDetail { margin-top: 6px; }
+
 /* ---------- 表单 ---------- */
 .form { border-top: 1px dashed var(--border-2); padding-top: 12px; margin-bottom: 12px; }
 .frow { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
