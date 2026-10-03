@@ -2663,6 +2663,12 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 200, { ok: true, url, mac: localMacHex() });
       }
 
+      case '/api/hotspot/open':
+        // 打开 Windows 的「移动热点」设置页。只跳固定 URI，不接任何用户输入，无注入面；
+        // 真正的开关仍由用户在系统设置里自己动手，工具不代改系统配置。
+        openBrowser('ms-settings:network-mobilehotspot');
+        return json(res, 200, { ok: true, target: 'ms-settings:network-mobilehotspot' });
+
       case '/api/vault':
         if (req.method === 'GET') return json(res, 200, { accounts: vaultPublic() });
         else {

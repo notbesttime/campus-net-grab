@@ -1644,6 +1644,15 @@ function bindEvents() {
   if ($('ckNetcheck')) $('ckNetcheck').onchange = () => setNetcheck($('ckNetcheck').checked, true);
   if ($('btnNetRun')) $('btnNetRun').onclick = () => runNetcheck();
   if ($('btnNetToggle')) $('btnNetToggle').onclick = () => setNetOpen(!state.netOpen, true);
+  if ($('btnHotspotOpen')) $('btnHotspotOpen').onclick = async () => {
+    // 只负责把人带到 Windows 的热点设置页，开关让用户自己动手
+    try {
+      await api('/api/hotspot/open', {});
+      toast('已打开 Windows 热点设置', 'ok');
+    } catch (e) {
+      toast('打不开（' + e.message + '），请手动进：系统设置 → 网络和 Internet → 移动热点', 'err');
+    }
+  };
   $('accountSelect').onchange = () => autoLoadForAccount();
   $('btnSelfLogout').onclick = async () => {
     if (!confirm(
@@ -1838,7 +1847,7 @@ async function init() {
     b.textContent = '当前为轻量模式：双击启动本地服务（启动校园网助手.bat）可解锁自动解绑、设备管理与密码加密保存。';
     b.className = 'banner';
     b.classList.remove('hidden');
-    for (const id of ['btnDevRefresh', 'btnUsageRefresh', 'btnWifiConnect', 'btnWifiRestore', 'ckDiag', 'btnDiagClear', 'btnClearPw', 'btnLogout', 'btnSelfLogout', 'btnTermLog', 'ckNetcheck', 'btnNetRun']) {
+    for (const id of ['btnDevRefresh', 'btnUsageRefresh', 'btnWifiConnect', 'btnWifiRestore', 'ckDiag', 'btnDiagClear', 'btnClearPw', 'btnLogout', 'btnSelfLogout', 'btnTermLog', 'ckNetcheck', 'btnNetRun', 'btnHotspotOpen']) {
       const el = $(id);
       if (el) { el.disabled = true; el.title = '需要启动本地服务'; }
     }

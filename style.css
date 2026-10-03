@@ -677,6 +677,8 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .mbox {
   width: 100%;
   max-width: 440px;
+  max-height: calc(100vh - 40px); /* 内容长了要能在弹窗里滚，别顶出屏幕摸不到底部按钮 */
+  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--border-2);
   border-radius: 12px;
@@ -771,6 +773,16 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .net-guide .ng-row > b { flex: none; width: 66px; color: var(--ink); font-weight: 600; }
 .net-guide .ng-row span { flex: 1; color: var(--ink-dim); }
 .net-guide .ng-row span b { color: var(--ink); font-weight: 600; }
+
+/* ---------- 设置：热点共享教程 ---------- */
+.steps {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+.steps li { margin: 4px 0; }
+.steps b, .steps strong { color: var(--ink); font-weight: 600; }
 
 /* ---------- 页面板块：主题色卡 ---------- */
 .theme-swatches { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; justify-content: flex-end; }

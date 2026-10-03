@@ -224,6 +224,7 @@
             打开后会每隔 60 秒检测一次<strong>当前连接的这个网络</strong>（校园网、家里 WiFi、有线都能测）：
             延迟、抖动、DNS 解析、首字节响应。检测只做 TCP 握手（不发数据），
             外加向公共测速目标发少量无标识请求；关闭时完全不探测。
+            想把这个网分给手机/同学？右上角齿轮「设置」→ 热点共享。
           </div>
 
           <div id="netBody" class="hidden">
@@ -388,6 +389,20 @@
           </div>
         </div>
         <div class="hint">检测只做 TCP 握手探延迟，外加向公共测速目标发少量无标识请求（不带 Cookie）；结果只留在页面上，不落盘。默认关闭，在「网络检测」卡片开关处打开。</div>
+      </div>
+
+      <div class="set-group">
+        <div class="set-group-title">把校园网分给别人（电脑开热点）</div>
+        <ol class="steps">
+          <li>点下面的按钮直接跳到 Windows「移动热点」页（也可以自己走：系统设置 → 网络和 Internet → 移动热点）。</li>
+          <li>「共享我的 Internet 连接来自」选 <b>WLAN</b>（就是连着 HNIST-student 的这张无线网卡）。</li>
+          <li>打开热点开关，记下电脑显示的<strong>网络名和密码</strong>。</li>
+          <li>手机/平板连这个热点就能上网——<b>认证在电脑上，它们不用再登门户，也不用抢网</b>；流量算在电脑这个账号上。</li>
+        </ol>
+        <div class="hint">注意：同一块无线网卡既连网又发热点，速度大约减半；个别老网卡不支持（开关是灰的）。电脑睡眠、合盖或关机后热点会断。别把热点改成开放网络，保持默认的 WPA2+密码。有的学校把「网络共享」视为违规，可能触发风控，请自行确认校园网规定。</div>
+        <div class="set-row actions">
+          <button id="btnHotspotOpen" class="btn ghost" type="button" title="打开 Windows 的移动热点设置页">打开 Windows 热点设置</button>
+        </div>
       </div>
 
       <div class="set-group">
