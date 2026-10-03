@@ -55,14 +55,21 @@ html, body {
 .hidden { display: none !important; }
 
 /* ---------- 顶栏 ---------- */
+/* 常驻页面最顶端：滚动时不被内容遮挡。在页面顶部时不投影，滚下去才加，
+   否则顶栏贴着窗口上沿还挂着阴影会显得很脏（靠 app.js 切 .stuck）。 */
 .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 40;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 14px 24px;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, var(--topbar-hi) 0%, var(--bg) 100%);
+  transition: box-shadow 0.18s;
 }
+.topbar.stuck { box-shadow: 0 8px 20px rgba(var(--shadow-rgb), 0.28); }
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: 0.5px; }
 .brand .sub { color: var(--ink-dim); font-size: 13px; }
@@ -426,11 +433,20 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .dev-table .ip-note { margin-left: 6px; vertical-align: middle; }
 
 /* ---------- 网络检测 ---------- */
-.net-who { font-size: 13px; color: var(--ink); margin-bottom: 8px; }
+/* 左：当前检测 / 本机 IP 两行；右：立即检测按钮 + 上次时间上下两条。
+   原来两者是上下两整块，合到一行后省下一整行高度。 */
+.net-head { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.net-who { flex: 1; min-width: 0; font-size: 13px; color: var(--ink); }
 .net-who b { color: var(--accent); }
 .net-who .nw-sub { color: var(--ink-dim); font-size: 12px; margin-top: 2px; }
-.net-actions { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.net-actions #netAt { flex: 1; text-align: right; }
+.net-actions {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.net-actions #netAt { margin: 0; text-align: right; font-size: 12px; line-height: 1.2; white-space: nowrap; }
 
 .net-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .net-table th {
@@ -743,6 +759,19 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 }
 .set-group-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
 
+/* ---------- 设置：网络检测指标说明 ---------- */
+.net-guide { font-size: 13px; }
+.net-guide .ng-row {
+  display: flex;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px dashed var(--border);
+}
+.net-guide .ng-row:last-of-type { border-bottom: none; }
+.net-guide .ng-row > b { flex: none; width: 66px; color: var(--ink); font-weight: 600; }
+.net-guide .ng-row span { flex: 1; color: var(--ink-dim); }
+.net-guide .ng-row span b { color: var(--ink); font-weight: 600; }
+
 /* ---------- 页面板块：主题色卡 ---------- */
 .theme-swatches { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; justify-content: flex-end; }
 .theme-swatch {
@@ -893,6 +922,9 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 :root[data-theme="mica"] body {
   background: linear-gradient(135deg, #7c9cc4 0%, #9a86b8 45%, #6fa3a8 75%, #46506e 100%) fixed;
 }
+/* 顶栏常驻后，云母主题的顶栏不能再用「渐变到不透明 --bg」——滚动时会盖出一条实色带。
+   改成半透明底 + 毛玻璃，内容从下面透过去，和卡片观感一致。 */
+:root[data-theme="mica"] .topbar { background: rgba(70, 80, 110, 0.62); }
 :root[data-theme="mica"] .card,
 :root[data-theme="mica"] .topbar,
 :root[data-theme="mica"] .termpanel,

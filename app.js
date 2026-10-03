@@ -38,6 +38,7 @@ const state = {
   netRetryCount: 0,      // 本轮已延后次数（防止无限推迟）
   heavyBusy: 0,          // 自助后台重型请求在途计数（见 api()）
   netHistory: [],        // 会话内检测历史（每 60s 一个点，仅内存，刷新即清零）
+  netOpen: true,         // 网络检测卡正文展开状态（localStorage 记忆，默认展开）
 };
 
 const STATUS_INTERVAL_MS = 60000;      // 前台自动探测门户状态
@@ -1268,6 +1269,20 @@ const NET_GRADE_TEXT = { excellent: '优秀', good: '良好', fair: '一般', po
 const NET_GRADE_RANK = { excellent: 3, good: 2, fair: 1, poor: 0, unknown: -1 };
 const NET_HISTORY_MAX = 60; // 只留最近 60 个点（60s 一点 ≈ 最近 1 小时），防止无限增长
 
+/** 收起/展开网络检测卡的正文（说明段或结果区），和用量卡一套写法。
+ *  开关不一起收起——收起来了也要能启停检测。 */
+function setNetOpen(open, persist) {
+  state.netOpen = !!open;
+  const fold = $('netFold');
+  const btn = $('btnNetToggle');
+  if (fold) fold.classList.toggle('hidden', !state.netOpen);
+  if (btn) {
+    btn.textContent = state.netOpen ? '收起' : '展开';
+    btn.setAttribute('aria-expanded', String(state.netOpen));
+  }
+  if (persist) localStorage.setItem('cnal_netOpen', state.netOpen ? '1' : '0');
+}
+
 function setNetcheck(on, persist) {
   state.netcheckOn = !!on;
   if ($('ckNetcheck')) $('ckNetcheck').checked = state.netcheckOn;
@@ -1628,6 +1643,7 @@ function bindEvents() {
   $('btnUsageToggle').onclick = () => setUsageOpen(!state.usageOpen, true);
   if ($('ckNetcheck')) $('ckNetcheck').onchange = () => setNetcheck($('ckNetcheck').checked, true);
   if ($('btnNetRun')) $('btnNetRun').onclick = () => runNetcheck();
+  if ($('btnNetToggle')) $('btnNetToggle').onclick = () => setNetOpen(!state.netOpen, true);
   $('accountSelect').onchange = () => autoLoadForAccount();
   $('btnSelfLogout').onclick = async () => {
     if (!confirm(
@@ -1742,6 +1758,14 @@ function bindEvents() {
   };
 
   $('lnkSelf').href = state.config.self;
+
+  // 顶栏用 position:sticky 常驻；贴着窗口上沿时不投影，滚下去才加（否则显得很脏）
+  const topbar = document.querySelector('.topbar');
+  if (topbar) {
+    const onScroll = () => topbar.classList.toggle('stuck', window.scrollY > 4);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  }
 }
 
 /* ---------------- 初始化 ---------------- */
@@ -1773,6 +1797,8 @@ async function init() {
   setUsageOpen(localStorage.getItem('cnal_usageOpen') === '1', false);
   // 网络检测：默认关闭，只有用户点开才会产生探测；开关状态被记住
   setNetcheck(localStorage.getItem('cnal_netcheck') === '1', false);
+  // 网络检测卡正文：默认展开（默认是关的，正文只有一段说明，展开更合适）
+  setNetOpen(localStorage.getItem('cnal_netOpen') !== '0', false);
   bindEvents();
   bindTermLogUI();
 
