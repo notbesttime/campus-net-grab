@@ -1644,6 +1644,16 @@ function bindEvents() {
   if ($('ckNetcheck')) $('ckNetcheck').onchange = () => setNetcheck($('ckNetcheck').checked, true);
   if ($('btnNetRun')) $('btnNetRun').onclick = () => runNetcheck();
   if ($('btnNetToggle')) $('btnNetToggle').onclick = () => setNetOpen(!state.netOpen, true);
+  // 设置里的长简介默认收起，点标题展开；每个板块独立记忆（cnal_set_<key>）
+  document.querySelectorAll('.set-group-title[data-key]').forEach((t) => {
+    const key = 'cnal_set_' + t.dataset.key;
+    setGroupOpen(t, localStorage.getItem(key) === '1');
+    t.onclick = () => {
+      const next = t.getAttribute('aria-expanded') !== 'true';
+      setGroupOpen(t, next);
+      localStorage.setItem(key, next ? '1' : '0');
+    };
+  });
   if ($('btnHotspotOpen')) $('btnHotspotOpen').onclick = async () => {
     // 只负责把人带到 Windows 的热点设置页，开关让用户自己动手
     try {
@@ -1778,6 +1788,14 @@ function bindEvents() {
 }
 
 /* ---------------- 初始化 ---------------- */
+
+/** 设置里「长简介」板块的开合：标题是按钮，内容在 .set-body 里 */
+function setGroupOpen(title, open) {
+  title.setAttribute('aria-expanded', String(open));
+  const body = title.parentElement.querySelector('.set-body');
+  if (body) body.classList.toggle('hidden', !open);
+}
+
 async function init() {
   const q = new URLSearchParams(location.search);
   const t = q.get('t');

@@ -747,19 +747,48 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
   .step { flex: 1 1 30%; }
 }
 
-/* ---------- 设置：板块化 ---------- */
+/* ---------- 设置：板块标题 ---------- */
+/* 特殊化成「胶囊 + 主色小竖条」；带 data-key 的是可开合的简介板块，
+   右侧箭头指示开合方向，悬停点亮主色。 */
 .set-group { margin-bottom: 6px; }
 .set-group-title {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  margin: 12px 0 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font: inherit;
   font-size: 13px;
   font-weight: 600;
   letter-spacing: 1px;
   color: var(--ink-dim);
-  margin: 12px 0 2px;
+  text-align: left;
+}
+.set-group-title::before {
+  content: "";
+  flex: none;
+  width: 3px; height: 12px;
+  background: var(--accent);
+  border-radius: 2px;
 }
 .set-group-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+button.set-group-title { cursor: pointer; transition: border-color 0.15s, color 0.15s; }
+button.set-group-title:hover { border-color: var(--accent-dim); color: var(--ink); }
+button.set-group-title::after {
+  content: "▾";
+  flex: none;
+  height: auto;
+  background: none;
+  color: var(--ink-dim);
+  font-size: 12px;
+  line-height: 1;
+}
+button.set-group-title[aria-expanded="false"]::after { content: "▸"; }
+button.set-group-title:hover::after { color: var(--accent); }
 
 /* ---------- 设置：网络检测指标说明 ---------- */
 .net-guide { font-size: 13px; }

@@ -365,43 +365,47 @@
       </div>
 
       <div class="set-group">
-        <div class="set-group-title">网络检测指标怎么看</div>
-        <div class="net-guide">
-          <div class="ng-row">
-            <b>延迟</b>
-            <span>一次 TCP 握手要多久。越小越顺：&lt;50 优秀、&lt;100 良好、&lt;200 一般，再慢算较差。</span>
+        <button type="button" class="set-group-title" data-key="netGuide" aria-expanded="false">网络检测指标怎么看</button>
+        <div class="set-body hidden">
+          <div class="net-guide">
+            <div class="ng-row">
+              <b>延迟</b>
+              <span>一次 TCP 握手要多久。越小越顺：&lt;50 优秀、&lt;100 良好、&lt;200 一般，再慢算较差。</span>
+            </div>
+            <div class="ng-row">
+              <b>抖动</b>
+              <span>多次握手的延迟波动，越小越稳。&lt;10 优秀、&lt;30 良好、&lt;60 一般。忽高忽低比单纯慢更影响体感。</span>
+            </div>
+            <div class="ng-row">
+              <b>DNS</b>
+              <span>把域名解析成 IP 的耗时，越小越快打开网页。&lt;50 优秀、&lt;150 良好、&lt;400 一般。</span>
+            </div>
+            <div class="ng-row">
+              <b>首字节</b>
+              <span>发出请求到收到服务器第一个字节，<b>含服务器自己的处理时间</b>，所以比延迟慢是正常的。&lt;300 优秀、&lt;800 良好、&lt;1500 一般。</span>
+            </div>
+            <div class="ng-row">
+              <b>国内/国外</b>
+              <span>分别测国内站点和境外站点。国外明显偏慢通常是校园出口线路的问题，不是你机器的问题；综合评级取各项里最差的一档。</span>
+            </div>
           </div>
-          <div class="ng-row">
-            <b>抖动</b>
-            <span>多次握手的延迟波动，越小越稳。&lt;10 优秀、&lt;30 良好、&lt;60 一般。忽高忽低比单纯慢更影响体感。</span>
-          </div>
-          <div class="ng-row">
-            <b>DNS</b>
-            <span>把域名解析成 IP 的耗时，越小越快打开网页。&lt;50 优秀、&lt;150 良好、&lt;400 一般。</span>
-          </div>
-          <div class="ng-row">
-            <b>首字节</b>
-            <span>发出请求到收到服务器第一个字节，<b>含服务器自己的处理时间</b>，所以比延迟慢是正常的。&lt;300 优秀、&lt;800 良好、&lt;1500 一般。</span>
-          </div>
-          <div class="ng-row">
-            <b>国内/国外</b>
-            <span>分别测国内站点和境外站点。国外明显偏慢通常是校园出口线路的问题，不是你机器的问题；综合评级取各项里最差的一档。</span>
-          </div>
+          <div class="hint">检测只做 TCP 握手探延迟，外加向公共测速目标发少量无标识请求（不带 Cookie）；结果只留在页面上，不落盘。默认关闭，在「网络检测」卡片开关处打开。</div>
         </div>
-        <div class="hint">检测只做 TCP 握手探延迟，外加向公共测速目标发少量无标识请求（不带 Cookie）；结果只留在页面上，不落盘。默认关闭，在「网络检测」卡片开关处打开。</div>
       </div>
 
       <div class="set-group">
-        <div class="set-group-title">把校园网分给别人（电脑开热点）</div>
-        <ol class="steps">
-          <li>点下面的按钮直接跳到 Windows「移动热点」页（也可以自己走：系统设置 → 网络和 Internet → 移动热点）。</li>
-          <li>「共享我的 Internet 连接来自」选 <b>WLAN</b>（就是连着 HNIST-student 的这张无线网卡）。</li>
-          <li>打开热点开关，记下电脑显示的<strong>网络名和密码</strong>。</li>
-          <li>手机/平板连这个热点就能上网——<b>认证在电脑上，它们不用再登门户，也不用抢网</b>；流量算在电脑这个账号上。</li>
-        </ol>
-        <div class="hint">注意：同一块无线网卡既连网又发热点，速度大约减半；个别老网卡不支持（开关是灰的）。电脑睡眠、合盖或关机后热点会断。别把热点改成开放网络，保持默认的 WPA2+密码。有的学校把「网络共享」视为违规，可能触发风控，请自行确认校园网规定。</div>
-        <div class="set-row actions">
-          <button id="btnHotspotOpen" class="btn ghost" type="button" title="打开 Windows 的移动热点设置页">打开 Windows 热点设置</button>
+        <button type="button" class="set-group-title" data-key="hotspot" aria-expanded="false">把校园网分给别人（电脑开热点）</button>
+        <div class="set-body hidden">
+          <ol class="steps">
+            <li>点下面的按钮直接跳到 Windows「移动热点」页（也可以自己走：系统设置 → 网络和 Internet → 移动热点）。</li>
+            <li>「共享我的 Internet 连接来自」选 <b>WLAN</b>（就是连着 HNIST-student 的这张无线网卡）。</li>
+            <li>打开热点开关，记下电脑显示的<strong>网络名和密码</strong>。</li>
+            <li>手机/平板连这个热点就能上网——<b>认证在电脑上，它们不用再登门户，也不用抢网</b>；流量算在电脑这个账号上。</li>
+          </ol>
+          <div class="hint">注意：同一块无线网卡既连网又发热点，速度大约减半；个别老网卡不支持（开关是灰的）。电脑睡眠、合盖或关机后热点会断。别把热点改成开放网络，保持默认的 WPA2+密码。有的学校把「网络共享」视为违规，可能触发风控，请自行确认校园网规定。</div>
+          <div class="set-row actions">
+            <button id="btnHotspotOpen" class="btn ghost" type="button" title="打开 Windows 的移动热点设置页">打开 Windows 热点设置</button>
+          </div>
         </div>
       </div>
 
