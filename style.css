@@ -559,6 +559,9 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
   box-shadow: 0 20px 60px rgba(var(--shadow-rgb), 0.5);
 }
 .mbox h3 { margin: 0 0 12px; font-size: 15px; }
+.mbox.wide { max-width: 620px; }
+.mhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.mhead h3 { margin: 0; }
 .dec-list {
   max-height: 240px;
   overflow-y: auto;

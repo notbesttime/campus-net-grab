@@ -41,6 +41,12 @@
           <path d="M7 9l3 3-3 3M12 15h5"></path>
         </svg>
       </button>
+      <button id="btnSettings" class="iconbtn" type="button" title="设置" aria-label="打开设置">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
       <span id="modeBadge" class="badge">检测运行模式…</span>
       <span id="netBadge" class="badge net unknown">状态未知</span>
     </div>
@@ -195,53 +201,6 @@
         </table>
         <div id="devHint" class="hint"></div>
       </div>
-
-      <div class="card">
-        <div class="card-head"><h2>设置</h2></div>
-
-        <div class="set-group">
-          <div class="set-group-title">页面</div>
-          <div class="set-row">
-            <span class="set-label">主题外观（自动记忆）</span>
-            <div class="theme-swatches" id="themeSwatches" role="group" aria-label="选择主题外观">
-              <button class="theme-swatch" data-theme="dark" type="button" aria-pressed="true"><span class="ts-preview"></span>深色</button>
-              <button class="theme-swatch" data-theme="light" type="button" aria-pressed="false"><span class="ts-preview"></span>浅色</button>
-              <button class="theme-swatch" data-theme="paper" type="button" aria-pressed="false"><span class="ts-preview"></span>稿纸</button>
-              <button class="theme-swatch" data-theme="mica" type="button" aria-pressed="false"><span class="ts-preview"></span>云母</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="set-group">
-          <div class="set-group-title">连接与网络</div>
-          <div class="set-row">
-            <span class="set-label">校园 WiFi</span>
-            <select id="wifiProfiles" class="select small"></select>
-            <button id="btnWifiConnect" class="btn ghost" type="button">连接</button>
-            <button id="btnWifiRestore" class="btn ghost hidden" type="button" title="切回本次抢网前所在的网络">切回原网络</button>
-          </div>
-          <div class="set-row">
-            <span class="set-label">一键抢网时自动连接校园 WiFi（HNIST-student）</span>
-            <label class="switch"><input type="checkbox" id="ckAutoWifi" checked><span></span></label>
-          </div>
-          <div class="set-row">
-            <span class="set-label">诊断模式（抓取后台页面用于接口分析）</span>
-            <label class="switch"><input type="checkbox" id="ckDiag"><span></span></label>
-          </div>
-        </div>
-
-        <div class="set-group">
-          <div class="set-group-title">维护</div>
-          <div class="set-row actions">
-            <button id="btnSelfLogout" class="btn ghost" type="button" title="注销后台登录占用（为在此查看/解绑设备、显示各 IP 用量统计），不影响正常上网">注销自助后台</button>
-            <button id="btnLogout" class="btn ghost" type="button" title="注销网络认证会话：会断开上网，需重新一键抢网">注销上网(门户)</button>
-            <button id="btnDiagClear" class="btn ghost" type="button">清除诊断信息</button>
-            <button id="btnClearPw" class="btn ghost" type="button">清除所有保存的密码</button>
-          </div>
-          <div class="hint">“诊断信息”是 diag 文件夹里的后台页面快照，仅用于解析问题排查；删除不影响账号、密码和任何功能（平时自动只留最近 20 个）。</div>
-        </div>
-        <div id="wifiHint" class="hint"></div>
-      </div>
     </section>
   </main>
 
@@ -290,6 +249,59 @@
         <button id="btnCapOk" class="btn primary" type="button">确定</button>
         <button id="btnCapCancel" class="btn ghost" type="button">取消抢网</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 弹窗：设置（顶栏齿轮按钮打开） -->
+  <div id="modalSettings" class="modal hidden">
+    <div class="mbox wide">
+      <div class="mhead">
+        <h3>设置</h3>
+        <button id="btnSettingsClose" class="btn ghost tiny" type="button">关闭</button>
+      </div>
+
+      <div class="set-group">
+        <div class="set-group-title">页面</div>
+        <div class="set-row">
+          <span class="set-label">主题外观（自动记忆）</span>
+          <div class="theme-swatches" id="themeSwatches" role="group" aria-label="选择主题外观">
+            <button class="theme-swatch" data-theme="dark" type="button" aria-pressed="true"><span class="ts-preview"></span>深色</button>
+            <button class="theme-swatch" data-theme="light" type="button" aria-pressed="false"><span class="ts-preview"></span>浅色</button>
+            <button class="theme-swatch" data-theme="paper" type="button" aria-pressed="false"><span class="ts-preview"></span>稿纸</button>
+            <button class="theme-swatch" data-theme="mica" type="button" aria-pressed="false"><span class="ts-preview"></span>云母</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="set-group">
+        <div class="set-group-title">连接与网络</div>
+        <div class="set-row">
+          <span class="set-label">校园 WiFi</span>
+          <select id="wifiProfiles" class="select small"></select>
+          <button id="btnWifiConnect" class="btn ghost" type="button">连接</button>
+          <button id="btnWifiRestore" class="btn ghost hidden" type="button" title="切回本次抢网前所在的网络">切回原网络</button>
+        </div>
+        <div class="set-row">
+          <span class="set-label">一键抢网时自动连接校园 WiFi（HNIST-student）</span>
+          <label class="switch"><input type="checkbox" id="ckAutoWifi" checked><span></span></label>
+        </div>
+        <div class="set-row">
+          <span class="set-label">诊断模式（抓取后台页面用于接口分析）</span>
+          <label class="switch"><input type="checkbox" id="ckDiag"><span></span></label>
+        </div>
+      </div>
+
+      <div class="set-group">
+        <div class="set-group-title">维护</div>
+        <div class="set-row actions">
+          <button id="btnSelfLogout" class="btn ghost" type="button" title="注销后台登录占用（为在此查看/解绑设备、显示各 IP 用量统计），不影响正常上网">注销自助后台</button>
+          <button id="btnLogout" class="btn ghost" type="button" title="注销网络认证会话：会断开上网，需重新一键抢网">注销上网(门户)</button>
+          <button id="btnDiagClear" class="btn ghost" type="button">清除诊断信息</button>
+          <button id="btnClearPw" class="btn ghost" type="button">清除所有保存的密码</button>
+        </div>
+        <div class="hint">“诊断信息”是 diag 文件夹里的后台页面快照，仅用于解析问题排查；删除不影响账号、密码和任何功能（平时自动只留最近 20 个）。</div>
+      </div>
+      <div id="wifiHint" class="hint"></div>
     </div>
   </div>
 

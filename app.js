@@ -1181,6 +1181,8 @@ function bindEvents() {
     // head 内联脚本已提前上主题，这里只同步色卡选中态
     setTheme(document.documentElement.getAttribute('data-theme') || 'dark', false);
   }
+  $('btnSettings').onclick = () => $('modalSettings').classList.remove('hidden');
+  $('btnSettingsClose').onclick = () => $('modalSettings').classList.add('hidden');
   $('btnMask').onclick = () => {
     state.masked = !state.masked;
     document.body.classList.toggle('masked', state.masked);
