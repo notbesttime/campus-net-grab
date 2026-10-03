@@ -465,6 +465,46 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .net-verdict.poor { color: var(--danger); }
 #netDetail { margin-top: 6px; }
 
+/* 延迟走势（会话内内存累积，刷新即清零；不落盘） */
+.net-trend { margin-top: 10px; }
+.net-trend-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 8px; margin-bottom: 6px;
+}
+.net-trend-head .ttl { font-size: 12px; color: var(--ink-dim); }
+.net-trend-head .hint { font-size: 11px; text-align: right; }
+.net-trend-box {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 2px 2px;
+}
+.net-trend-empty {
+  font-size: 12px; color: var(--ink-dim);
+  text-align: center; padding: 24px 0;
+}
+.net-trend svg { display: block; width: 100%; height: auto; }
+.net-trend .grid { stroke: var(--border); stroke-width: 1; }
+.net-trend .axis-txt { fill: var(--ink-dim); font-size: 9px; font-family: var(--mono); }
+.net-trend .ln-dom, .net-trend .ln-frn {
+  fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round;
+}
+.net-trend .ln-dom { stroke: var(--accent); }
+.net-trend .ln-frn { stroke: var(--tag-pc); }
+.net-trend .dot-dom { fill: var(--accent); }
+.net-trend .dot-frn { fill: var(--tag-pc); }
+.net-trend .dot-last { stroke: var(--panel-2); stroke-width: 1.5; }
+.net-trend-legend {
+  display: flex; flex-wrap: wrap; gap: 2px 14px;
+  margin: 6px 6px 4px; font-size: 11px; color: var(--ink-dim);
+}
+.net-trend-legend i {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  margin-right: 5px; vertical-align: middle;
+}
+.net-trend-legend i.dom { background: var(--accent); }
+.net-trend-legend i.frn { background: var(--tag-pc); }
+
 /* ---------- 表单 ---------- */
 .form { border-top: 1px dashed var(--border-2); padding-top: 12px; margin-bottom: 12px; }
 .frow { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }

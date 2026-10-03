@@ -37,6 +37,7 @@ const state = {
   netRetryTimer: null,   // 撞上重型请求时的延后重试
   netRetryCount: 0,      // 本轮已延后次数（防止无限推迟）
   heavyBusy: 0,          // 自助后台重型请求在途计数（见 api()）
+  netHistory: [],        // 会话内检测历史（每 60s 一个点，仅内存，刷新即清零）
 };
 
 const STATUS_INTERVAL_MS = 60000;      // 前台自动探测门户状态
@@ -1265,6 +1266,7 @@ function setUsageOpen(open, persist) {
 const NETCHECK_INTERVAL_MS = 60000;
 const NET_GRADE_TEXT = { excellent: '优秀', good: '良好', fair: '一般', poor: '较差' };
 const NET_GRADE_RANK = { excellent: 3, good: 2, fair: 1, poor: 0, unknown: -1 };
+const NET_HISTORY_MAX = 60; // 只留最近 60 个点（60s 一点 ≈ 最近 1 小时），防止无限增长
 
 function setNetcheck(on, persist) {
   state.netcheckOn = !!on;
@@ -1273,6 +1275,7 @@ function setNetcheck(on, persist) {
   if ($('netIdle')) $('netIdle').classList.toggle('hidden', state.netcheckOn);
   stopNetTimer();
   if (state.netcheckOn) {
+    renderNetTrend();  // 先把空态占位画出来，别让人以为卡片坏了
     loadNetIdentity(); // 先把「当前检测的是哪个网络」显示出来，别让用户盯着「—」等好几秒
     runNetcheck();     // 打开就立刻跑一次，别让用户干等一个间隔
     state.netTimer = setInterval(() => runNetcheck(), NETCHECK_INTERVAL_MS);
@@ -1370,10 +1373,156 @@ function renderNetWho(n) {
   }
 }
 
+/* ---- 会话内趋势（只存内存，不落盘；刷新即清零） ----
+ * 每个 60s 检测成功就入账一个点，最多留 60 个。绘图不引任何第三方库，
+ * 手写内联 SVG——和图无关的地方一个字节都没多。
+ */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  if (attrs) for (const k in attrs) el.setAttribute(k, String(attrs[k]));
+  return el;
+}
+
+/** 把数值抬到刻度友好的上限（50/100/200…），y 轴才不会出现 137ms 这种怪刻度 */
+function niceCeil(v) {
+  if (!isFinite(v) || v <= 0) return 50;
+  for (const s of [50, 100, 200, 300, 400, 500, 600, 700, 800, 1000, 1500, 2000, 3000, 5000]) {
+    if (v <= s) return s;
+  }
+  return Math.ceil(v / 1000) * 1000;
+}
+
+/** 把一次检测结果记进会话内历史；按 r.at 去重，晚到的旧结果不会重复入账 */
+function recordNetPoint(r) {
+  if (!r || !r.at) return;
+  const hist = state.netHistory;
+  if (hist.length && hist[hist.length - 1].t === r.at) return;
+  const num = v => (typeof v === 'number' && isFinite(v) ? v : null);
+  const lat = k => (((r.groups || {})[k] || {}).latency || {});
+  // 只记延迟：抖动数量级比延迟小一个量级，同轴画会被压成一条贴底直线（实测过），
+  // 数值在表格里有，图上不重复。
+  hist.push({
+    t: r.at,
+    dom: num(lat('domestic').avg),
+    frn: num(lat('foreign').avg),
+  });
+  while (hist.length > NET_HISTORY_MAX) hist.shift();
+}
+
+/** 延迟走势：横轴是检测次序（不是真实时间刻度），够看趋势就行 */
+function renderNetTrend() {
+  const box = $('netTrend');
+  if (!box) return;
+  const hint = $('netTrendHint');
+  const hist = state.netHistory || [];
+  box.innerHTML = '';
+
+  if (!hist.length) {
+    const d = document.createElement('div');
+    d.className = 'net-trend-empty';
+    d.textContent = '趋势收集中…打开后每 60 秒记一个点';
+    box.appendChild(d);
+    if (hint) hint.textContent = '';
+    return;
+  }
+
+  const W = 320, H = 104, padL = 36, padR = 10, padT = 10, padB = 18;
+  const plotW = W - padL - padR, plotH = H - padT - padB;
+  const n = hist.length;
+
+  let peak = 0;
+  for (const p of hist) {
+    for (const v of [p.dom, p.frn]) {
+      if (v != null && v > peak) peak = v;
+    }
+  }
+  if (peak <= 0) peak = 50; // 全是超时（null）时给个假刻度，别让坐标轴塌成一条线
+  const yMax = niceCeil(peak * 1.15);
+  const xAt = i => padL + (n === 1 ? plotW / 2 : (plotW * i) / (n - 1));
+  const yAt = v => padT + plotH - (Math.max(0, v) / yMax) * plotH;
+
+  const svg = svgEl('svg', { viewBox: '0 0 ' + W + ' ' + H, role: 'img', 'aria-label': '延迟趋势' });
+
+  // 网格与刻度（0 / 半程 / 上限）
+  for (const frac of [0, 0.5, 1]) {
+    const v = yMax * frac, y = yAt(v);
+    svg.appendChild(svgEl('line', { class: 'grid', x1: padL, x2: W - padR, y1: y, y2: y }));
+    const tx = svgEl('text', { class: 'axis-txt', x: padL - 5, y: y + 3, 'text-anchor': 'end' });
+    tx.textContent = String(Math.round(v));
+    svg.appendChild(tx);
+  }
+  const unit = svgEl('text', { class: 'axis-txt', x: 2, y: padT + 4, 'text-anchor': 'start' });
+  unit.textContent = 'ms';
+  svg.appendChild(unit);
+
+  // 折线：值为 null（超时）时断开当前点，不连出误导的斜线
+  const drawLine = (key, cls) => {
+    let d = '', pen = false, has = false;
+    hist.forEach((p, i) => {
+      const v = p[key];
+      if (v == null) { pen = false; return; }
+      has = true;
+      d += (pen ? ' L' : ' M') + xAt(i).toFixed(1) + ' ' + yAt(v).toFixed(1);
+      pen = true;
+    });
+    if (!has) return;
+    svg.appendChild(svgEl('path', { class: cls, d: d }));
+  };
+
+  drawLine('dom', 'ln-dom');
+  drawLine('frn', 'ln-frn');
+
+  // 点：点多的时候只标最新一个，免得糊成一片
+  const dot = (i, v, cls, last) => {
+    if (v == null) return;
+    const c = svgEl('circle', {
+      class: cls + (last ? ' dot-last' : ''), cx: xAt(i).toFixed(1), cy: yAt(v).toFixed(1),
+      r: last ? 3.2 : 2,
+    });
+    svg.appendChild(c);
+  };
+  const showAllDots = n <= 20;
+  hist.forEach((p, i) => {
+    const last = i === n - 1;
+    if (showAllDots || last) { dot(i, p.dom, 'dot-dom', last); dot(i, p.frn, 'dot-frn', last); }
+  });
+
+  box.appendChild(svg);
+
+  const lg = document.createElement('div');
+  lg.className = 'net-trend-legend';
+  const items = [
+    ['dom', '国内延迟'], ['frn', '国外延迟'],
+  ];
+  for (const [k, label] of items) {
+    const s = document.createElement('span');
+    const i = document.createElement('i');
+    i.className = k;
+    s.appendChild(i);
+    s.appendChild(document.createTextNode(label));
+    lg.appendChild(s);
+  }
+  box.appendChild(lg);
+
+  if (hint) {
+    const t0 = new Date(hist[0].t), t1 = new Date(hist[n - 1].t);
+    const p = x => String(x).padStart(2, '0');
+    if (n === 1) hint.textContent = '已收集 1/2 个点，再来一次才成线';
+    else {
+      const mins = Math.max(1, Math.round((t1 - t0) / 60000));
+      hint.textContent = '共 ' + n + ' 点 · ' + p(t0.getHours()) + ':' + p(t0.getMinutes())
+        + '→' + p(t1.getHours()) + ':' + p(t1.getMinutes()) + '（近 ' + mins + ' 分钟）';
+    }
+  }
+}
+
 function renderNetcheck(payload) {
   const r = (payload && payload.result) || null;
   renderNetWho((payload && payload.network) || (r && r.network) || null);
   if (!r || !r.groups) return;
+  recordNetPoint(r);   // 每次都入账，靠 r.at 去重（GET 拿回的旧结果不会重复计入）
   const dom = r.groups.domestic || {};
   const frn = r.groups.foreign || {};
   const lat = g => (g.latency || {});
@@ -1428,6 +1577,7 @@ function renderNetcheck(payload) {
       + ' · 用时 ' + (r.durationMs / 1000).toFixed(1) + 's'
       + (r.truncated ? '（网络太慢，本次提前结束，带「—」的项没测）' : '');
   }
+  renderNetTrend();
 }
 
 /* ---------------- 事件绑定 ---------------- */
