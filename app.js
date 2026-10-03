@@ -698,7 +698,7 @@ function renderDevices(devices, endpoints) {
   const hint = $('devHint');
   const notes = [];
   if (state.mode === 'lite') notes.push('轻量模式无法自动读取后台，请点“打开后台”手动操作。');
-  else if (unactionable && devices.length) notes.push('部分设备未能识别解绑操作，可开启诊断模式后刷新，把 diag 报告交给我分析。');
+  else if (unactionable && devices.length) notes.push('部分设备未能识别解绑操作，可在右上角齿轮「设置」里开启诊断模式后刷新，把 diag 报告交给我分析。');
   if (endpoints && endpoints.length) notes.push('识别到的后台接口：' + endpoints.join('、'));
   hint.textContent = notes.join(' ');
 }
@@ -713,7 +713,7 @@ async function ensureSelfLoginInteractive(opts) {
       if (!sel || !s.account || s.account === sel.username) return true;
       if (!silent) {
         toast(`自助后台当前登录的是 ${s.account}，与所选账号 ${sel.username} 不一致：`
-          + `请先点“注销自助后台”，再加载 ${sel.username} 的设备与用量。`, 'err');
+          + `请先到右上角齿轮「设置」里点“注销自助后台”，再加载 ${sel.username} 的设备与用量。`, 'err');
       }
       return false;
     }
@@ -1181,8 +1181,14 @@ function bindEvents() {
     // head 内联脚本已提前上主题，这里只同步色卡选中态
     setTheme(document.documentElement.getAttribute('data-theme') || 'dark', false);
   }
-  $('btnSettings').onclick = () => $('modalSettings').classList.remove('hidden');
-  $('btnSettingsClose').onclick = () => $('modalSettings').classList.add('hidden');
+  const modalSettings = $('modalSettings');
+  $('btnSettings').onclick = () => modalSettings.classList.remove('hidden');
+  $('btnSettingsClose').onclick = () => modalSettings.classList.add('hidden');
+  // 点弹窗外的背景关闭（只关设置面板）
+  modalSettings.onclick = (e) => { if (e.target === modalSettings) modalSettings.classList.add('hidden'); };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modalSettings.classList.contains('hidden')) modalSettings.classList.add('hidden');
+  });
   $('btnMask').onclick = () => {
     state.masked = !state.masked;
     document.body.classList.toggle('masked', state.masked);

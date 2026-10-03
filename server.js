@@ -1497,7 +1497,7 @@ class SelfClient {
     }
     return {
       ok: false,
-      tip: tip || '登录失败（服务器无提示）：常见原因是该账号在别处仍有活跃的后台会话——请点设置里的“注销自助后台”再试，或等约半小时会话过期',
+      tip: tip || '登录失败（服务器无提示）：常见原因是该账号在别处仍有活跃的后台会话——请点右上角齿轮「设置」里的“注销自助后台”再试，或等约半小时会话过期',
       needCaptcha: false,
       captchaB64: this.captchaB64,
     };
@@ -1556,7 +1556,7 @@ class SelfClient {
       if (r.status >= 400) throw new Error('解绑请求 HTTP ' + r.status);
       return { ok: true, status: r.status };
     }
-    const e = new Error('未能从页面识别解绑操作，请开启诊断模式后重试一次，把 diag 报告交给我分析');
+    const e = new Error('未能从页面识别解绑操作，请到右上角齿轮「设置」里开启诊断模式后重试一次，把 diag 报告交给我分析');
     e.needManual = true;
     throw e;
   }
@@ -2144,7 +2144,7 @@ async function runConnect(payload) {
     }
     if (!lg.ok) {
       emit('warn', { msg: '自助服务登录失败，跳过预检直接尝试门户登录：' + (lg.tip || '未知原因') });
-      setStep('precheck', 'warn', '预检跳过（可点设置「注销自助后台」后再试）');
+      setStep('precheck', 'warn', '预检跳过（可点右上角齿轮「设置」→「注销自助后台」后再试）');
       setStep('unbind', 'skip');
     } else {
       let dashLines = [], devList = [];
@@ -2238,18 +2238,18 @@ async function runConnect(payload) {
         hint: `登录被拒（${reasonMsg}）——账号 PC 名额可能已被占用，确认后解绑再登`,
         detail: others.length
           ? '同意后：解绑下列设备 → 重新 Captive 登录。'
-          : '未能自动列出占用设备。若确认没有其他电脑在用本账号，可先点「注销自助后台」再试；同意后仍会尝试继续抢网。',
+          : '未能自动列出占用设备。若确认没有其他电脑在用本账号，可先到右上角齿轮「设置」里点「注销自助后台」再试；同意后仍会尝试继续抢网。',
         devices: others.map(d => ({ text: d.text, ip: d.ip, mac: d.mac, type: d.type })),
       });
       const act = await waitFor('decision', 300000);
       if (act !== 'continue') {
         setStep('portal', 'pause'); setStep('unbind', 'skip'); setStep('verify', 'skip');
-        finish(false, '已暂停：请先处理占用设备或注销自助后台，之后再点“一键抢网”继续。');
+        finish(false, '已暂停：请先处理占用设备，或到右上角齿轮「设置」里注销自助后台，之后再点“一键抢网”继续。');
         return 'paused';
       }
       if (!others.length) {
         setStep('unbind', 'warn', '未能从绑定设备/在线列表解析到占用设备，请在右侧「绑定设备」手动解绑后再试');
-        throw new Error('登录失败：' + reasonMsg + '（右侧「绑定设备」里可能仍有其他电脑；请手动解绑或注销自助后台后再一键）');
+        throw new Error('登录失败：' + reasonMsg + '（右侧「绑定设备」里可能仍有其他电脑；请手动解绑，或在右上角齿轮「设置」里注销自助后台后再一键）');
       }
       await unbindOthers();
       return null;

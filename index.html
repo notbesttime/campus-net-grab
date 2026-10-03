@@ -126,18 +126,9 @@
         </div>
         <div class="hint" id="stRefresh">上次刷新：—</div>
       </div>
-
-      <div class="card">
-        <div class="card-head">
-          <h2>当前账号的各 IP 用量</h2>
-          <button id="btnUsageRefresh" class="btn ghost" type="button">加载</button>
-        </div>
-        <div id="usageGrid" class="usage-grid"></div>
-        <div id="usageHint" class="hint">按账号从自助系统的上网记录统计（范围以查询页为准）。首次加载需登录自助服务。</div>
-      </div>
     </section>
 
-    <!-- 右列：账号簿 / 设备 / 设置 -->
+    <!-- 右列：账号簿 / 设备 / 用量 -->
     <section class="col col-right">
       <div class="card">
         <div class="card-head">
@@ -200,6 +191,15 @@
           </tbody>
         </table>
         <div id="devHint" class="hint"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>当前账号的各 IP 用量</h2>
+          <button id="btnUsageRefresh" class="btn ghost" type="button">加载</button>
+        </div>
+        <div id="usageGrid" class="usage-grid"></div>
+        <div id="usageHint" class="hint">按账号从自助系统的上网记录统计（范围以查询页为准）。首次加载需登录自助服务；若提示后台被占用，可在右上角齿轮「设置」里注销自助后台。</div>
       </div>
     </section>
   </main>
