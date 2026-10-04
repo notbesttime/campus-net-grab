@@ -38,7 +38,6 @@ const state = {
   netRetryCount: 0,      // 本轮已延后次数（防止无限推迟）
   heavyBusy: 0,          // 自助后台重型请求在途计数（见 api()）
   netHistory: [],        // 会话内检测历史（每 60s 一个点，仅内存，刷新即清零）
-  netOpen: true,         // 网络检测卡正文展开状态（localStorage 记忆，默认展开）
 };
 
 const STATUS_INTERVAL_MS = 60000;      // 前台自动探测门户状态
@@ -249,7 +248,10 @@ async function api(path, body, method) {
     }
     return data;
   } finally {
-    if (heavy) state.heavyBusy--;
+    if (heavy) {
+      state.heavyBusy--;
+      if (state.heavyBusy === 0) netcheckAfterHeavy();
+    }
   }
 }
 
@@ -1269,20 +1271,6 @@ const NET_GRADE_TEXT = { excellent: '优秀', good: '良好', fair: '一般', po
 const NET_GRADE_RANK = { excellent: 3, good: 2, fair: 1, poor: 0, unknown: -1 };
 const NET_HISTORY_MAX = 60; // 只留最近 60 个点（60s 一点 ≈ 最近 1 小时），防止无限增长
 
-/** 收起/展开网络检测卡的正文（说明段或结果区），和用量卡一套写法。
- *  开关不一起收起——收起来了也要能启停检测。 */
-function setNetOpen(open, persist) {
-  state.netOpen = !!open;
-  const fold = $('netFold');
-  const btn = $('btnNetToggle');
-  if (fold) fold.classList.toggle('hidden', !state.netOpen);
-  if (btn) {
-    btn.textContent = state.netOpen ? '收起' : '展开';
-    btn.setAttribute('aria-expanded', String(state.netOpen));
-  }
-  if (persist) localStorage.setItem('cnal_netOpen', state.netOpen ? '1' : '0');
-}
-
 function setNetcheck(on, persist) {
   state.netcheckOn = !!on;
   if ($('ckNetcheck')) $('ckNetcheck').checked = state.netcheckOn;
@@ -1317,20 +1305,34 @@ function stopNetTimer() {
 /** 撞上重型请求就稍后再试，而不是直接丢掉这一轮 */
 function scheduleNetRetry() {
   if (state.netRetryTimer) return;
-  if (state.netRetryCount >= 8) return; // 最多推迟 8 次（约 24 秒）就先放弃，等下一个间隔
+  // 避让上限约 13 次（~40s）：超过就强行测。 reason：自助后台请求挂住时（比如
+  // 在校园热点/信号差的地方根本连不上 172.31.8.43），heavyBusy 会一直 >0，
+  // 无限避让 = 第一次检测永远不来。等了 40s 还在避让，宁可测一个可能被
+  // 轻微污染的数，也不要让用户干等几分钟。
   state.netRetryCount++;
   state.netRetryTimer = setTimeout(() => {
     state.netRetryTimer = null;
-    runNetcheck();
+    runNetcheck({ force: state.netRetryCount > 13 });
   }, 3000);
 }
 
-async function runNetcheck() {
+/** 重型请求刚收尾：若有网络检测正排队避开它，立刻补跑，别让第一次检测白等一个间隔 */
+function netcheckAfterHeavy() {
+  if (state.heavyBusy > 0 || !state.netRetryTimer) return;
+  clearTimeout(state.netRetryTimer);
+  state.netRetryTimer = null;
+  if (state.netBusy) return; // 已有一次检测在跑，排队的那次不用再来
+  runNetcheck();
+}
+
+async function runNetcheck(opts) {
   if (!state.netcheckOn || state.mode !== 'server') return;
   if (state.netBusy || state.running || document.hidden) return;
   // 自助后台正在跑（会话/登录/设备/用量）时先不测：这时候测出来的延迟和抖动
   // 是自家请求挤出来的假数字，宁可延后几秒也不要给一个误导的结论。
-  if (state.heavyBusy > 0) { scheduleNetRetry(); return; }
+  // 但避让不是无限的：scheduleNetRetry 排到 ~40s 还在避让会带 force 来，
+  // 因为自助后台挂住时（连不上）heavyBusy 可能几分钟都降不下来。
+  if (state.heavyBusy > 0 && !(opts && opts.force)) { scheduleNetRetry(); return; }
   state.netRetryCount = 0;
   state.netBusy = true;
   const btn = $('btnNetRun');
@@ -1643,7 +1645,6 @@ function bindEvents() {
   $('btnUsageToggle').onclick = () => setUsageOpen(!state.usageOpen, true);
   if ($('ckNetcheck')) $('ckNetcheck').onchange = () => setNetcheck($('ckNetcheck').checked, true);
   if ($('btnNetRun')) $('btnNetRun').onclick = () => runNetcheck();
-  if ($('btnNetToggle')) $('btnNetToggle').onclick = () => setNetOpen(!state.netOpen, true);
   // 设置里的长简介默认收起，点标题展开；每个板块独立记忆（cnal_set_<key>）
   document.querySelectorAll('.set-group-title[data-key]').forEach((t) => {
     const key = 'cnal_set_' + t.dataset.key;
@@ -1824,8 +1825,6 @@ async function init() {
   setUsageOpen(localStorage.getItem('cnal_usageOpen') === '1', false);
   // 网络检测：默认关闭，只有用户点开才会产生探测；开关状态被记住
   setNetcheck(localStorage.getItem('cnal_netcheck') === '1', false);
-  // 网络检测卡正文：默认展开（默认是关的，正文只有一段说明，展开更合适）
-  setNetOpen(localStorage.getItem('cnal_netOpen') !== '0', false);
   bindEvents();
   bindTermLogUI();
 
