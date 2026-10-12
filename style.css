@@ -380,6 +380,7 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .usage-head {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;   /* 标签多了就换行，绝不挤掉 IP——IP 是这张卡里最该看清的东西 */
   gap: 6px;
   margin-bottom: 6px;
 }
@@ -387,10 +388,10 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
   font-family: var(--mono);
   font-size: 14px;
   font-weight: 600;
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* 不参与压缩：之前是 flex:1 + min-width:0，加上「本机 / 可能本机」标签后
+     IP 会被挤成「1.」这种读不出来的样子（2026-10-08 截图发现） */
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 .usage-row {
   display: flex;
@@ -601,10 +602,14 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
   border-radius: 4px;
   border: 1px solid var(--border-2);
   color: var(--ink-dim);
+  white-space: nowrap;   /* 标签一律不折行（「可能本机」在窄列里曾折成两行） */
 }
 .tag.pc { color: var(--tag-pc); border-color: var(--tag-pc-border); }
 .tag.phone { color: var(--tag-phone); border-color: var(--tag-phone-border); }
 .tag.self { color: var(--accent); border-color: var(--accent-dim); }
+/* 「可能本机」：MAC 不在本机当前网卡、但本机以前用过（Wi-Fi 随机硬件地址换过 MAC）。
+   用 warn 色而非 accent——它只是弱提示，不是确凿结论。悬停有说明。 */
+.tag.maybe-self { color: var(--warn); border-color: var(--warn-border); cursor: help; }
 .tag.on { color: var(--accent); border-color: var(--accent-dim); }
 .tag.off { color: var(--ink-dim); border-color: var(--border-2); }
 
@@ -689,6 +694,24 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .mbox.wide { max-width: 680px; }
 .mhead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
 .mhead h3 { margin: 0; }
+
+/* ---------- 「关于」面板 ---------- */
+.about-ver { font-size: 13px; color: var(--ink-dim); letter-spacing: 0.2px; margin: 2px 0 12px; }
+.about-ver .about-sep { margin: 0 6px; opacity: 0.6; }
+.about-why { font-size: 14px; line-height: 1.75; color: var(--ink); margin: 0 0 16px; }
+.about-links { display: flex; flex-direction: column; }
+.about-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px dashed var(--border);
+  font-size: 14px;
+}
+.about-row:last-of-type { border-bottom: none; }
+.about-k { flex: none; width: 84px; color: var(--ink-dim); }
+.about-row a { color: var(--accent); text-decoration: none; word-break: break-all; }
+.about-row a:hover { text-decoration: underline; }
 .dec-list {
   max-height: 240px;
   overflow-y: auto;
@@ -779,12 +802,16 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 button.set-group-title { cursor: pointer; transition: border-color 0.15s, color 0.15s; }
 button.set-group-title:hover { border-color: var(--accent-dim); color: var(--ink); }
 button.set-group-title::after {
+  /* 折叠箭头：字号做得比正文大一些才好认；同时给固定宽度并居中，
+     避免 ▾/▸ 两个字形宽度不同导致展开/收起时后面的内容左右跳动 */
   content: "▾";
   flex: none;
+  width: 22px;
   height: auto;
+  text-align: center;
   background: none;
   color: var(--ink-dim);
-  font-size: 12px;
+  font-size: 20px;
   line-height: 1;
 }
 button.set-group-title[aria-expanded="false"]::after { content: "▸"; }

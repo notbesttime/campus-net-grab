@@ -28,3 +28,6 @@ _shim*.bat
 # IP 备注（设备别名，属个人数据）
 ip-notes.json
 ip-notes.json.bad-*
+
+# 本机用过的 MAC 历史（供「可能本机」判定；含真实网卡 MAC）
+seen-macs.json

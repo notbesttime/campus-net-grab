@@ -38,6 +38,7 @@ const state = {
   netRetryCount: 0,      // 本轮已延后次数（防止无限推迟）
   heavyBusy: 0,          // 自助后台重型请求在途计数（见 api()）
   netHistory: [],        // 会话内检测历史（每 60s 一个点，仅内存，刷新即清零）
+  borrowBusy: false,     // 正在「借网查看」：临时切校园网取一次实时数据（与一键抢网互斥）
 };
 
 const STATUS_INTERVAL_MS = 60000;      // 前台自动探测门户状态
@@ -222,12 +223,32 @@ function bindTermLogUI() {
   };
 }
 
+const SELF_TIMEOUT_MS = 20000;       // 查询类（设备/用量/会话）
+// 登录类放宽到 45s：服务端一次登录最坏要 10s(开登录页) + 8s(取验证码) + 12s(提交) = 30s，
+// 用 20s 会把「正在登录」误报成「20 秒无响应」——这是 2026-10-08 修掉的回归。
+const SELF_LOGIN_TIMEOUT_MS = 45000;
+
+/* 「可能本机」标签的说明（悬停可见）
+ * 由来：Windows 的 Wi-Fi「随机硬件地址」会换掉整个 MAC，门户于是把同一台笔记本算成
+ * 多台设备、并把本机自己的旧会话列成「其他设备在线」。服务端只在 MAC 命中「本机用过
+ * 的历史 MAC」时才打这个标——这是弱证据，只用于提示，不参与是否解绑的决策。 */
+const MAYBE_SELF_TIP =
+  '这条设备的 MAC 与本机当前网卡不同，但本机以前用过这个 MAC——大概率是你自己的旧会话'
+  + '（Windows 的 Wi-Fi「随机硬件地址」会换掉整个 MAC，门户就把同一台笔记本算成了两台设备）。\n'
+  + '想以后不再出现：设置 → 网络和 Internet → WLAN → 该网络 → 「随机硬件地址」→ 关闭。\n'
+  + '（这是根据本机 MAC 历史做的推测，仅供参考；解绑与否仍由你自己决定。）';
+
 async function api(path, body, method) {
   // 自助后台的请求（会话/登录/设备/用量/解绑）都是「重型」的：网络检测必须避开它们，
   // 否则自家请求会把延迟与抖动一起顶上去。实测同一台机器同一时刻：
   // 与用量查询并发时国内延迟 158ms、抖动 337ms；错开后 37ms、8ms。
-  const heavy = String(path).startsWith('/api/self/');
+  const p = String(path);
+  const heavy = p.startsWith('/api/self/');
+  const timeoutMs = p.startsWith('/api/self/login') ? SELF_LOGIN_TIMEOUT_MS : SELF_TIMEOUT_MS;
   if (heavy) state.heavyBusy++;
+  // 客户端超时：信号差/连不上 172.31.8.43 时服务端可能长时间不回，页面自己掐掉，
+  // 让设备/用量快速报「超时」而不是无限转圈，heavyBusy 也能及时归零让网络检测补跑。
+  let selfTimer = null;
   try {
     const opt = {
       method: method || (body ? 'POST' : 'GET'),
@@ -237,7 +258,22 @@ async function api(path, body, method) {
       opt.headers['Content-Type'] = 'application/json';
       opt.body = JSON.stringify(body);
     }
-    const r = await fetch(path, opt);
+    if (heavy) {
+      const ctl = new AbortController();
+      opt.signal = ctl.signal;
+      selfTimer = setTimeout(() => ctl.abort(), timeoutMs);
+    }
+    let r;
+    try {
+      r = await fetch(path, opt);
+    } catch (err) {
+      if (selfTimer && err && err.name === 'AbortError') {
+        const e = new Error(`自助后台 ${Math.round(timeoutMs / 1000)} 秒无响应，已取消等待（超时）`);
+        e.timeout = true;
+        throw e;
+      }
+      throw err;
+    }
     let data = null;
     try { data = await r.json(); } catch {}
     if (!r.ok) {
@@ -248,6 +284,7 @@ async function api(path, body, method) {
     }
     return data;
   } finally {
+    if (selfTimer) clearTimeout(selfTimer);
     if (heavy) {
       state.heavyBusy--;
       if (state.heavyBusy === 0) netcheckAfterHeavy();
@@ -420,8 +457,8 @@ function showPause(msg) {
 function hidePause() { $('pauseBanner').classList.add('hidden'); }
 
 function syncConnectBtn() {
-  $('btnConnect').disabled = state.running;
-  $('btnConnect').textContent = state.running ? '抢网中…' : '一键抢网';
+  $('btnConnect').disabled = state.running || state.borrowBusy;
+  $('btnConnect').textContent = state.running ? '抢网中…' : (state.borrowBusy ? '借网查看中…' : '一键抢网');
 }
 
 /* ---------------- 弹窗 ---------------- */
@@ -458,45 +495,40 @@ function closeCaptcha(val) {
 function showDecision(ev) {
   const box = $('decList');
   box.innerHTML = '';
-  const kind = ev.kind || 'unbind';
-  if (kind === 'self_logout') {
-    $('decTitle').textContent = ev.hint || '自助后台会话被占用，是否注销后继续抢网？';
+  const devices = ev.devices || [];
+  // 占用确认只有这一处弹窗：「注销后台占用 / 取设备列表 / 解绑 / 重登」都在同一次确认里说清，
+  // 不再有「先问是否注销后台、再问是否解绑」的两连问。
+  $('decTitle').textContent = ev.hint || '该账号当前有其他设备在使用';
+  if (ev.detail) {
     const tip = document.createElement('div');
     tip.className = 'dim';
     tip.style.marginBottom = '8px';
-    tip.textContent = ev.detail || '同意后将注销自助后台登录占用，并继续一键抢网。';
+    tip.textContent = ev.detail;
     box.appendChild(tip);
-  } else {
-    $('decTitle').textContent = ev.hint || '该账号当前有其他设备在使用';
-    if (ev.detail) {
-      const tip = document.createElement('div');
-      tip.className = 'dim';
-      tip.style.marginBottom = '8px';
-      tip.textContent = ev.detail;
-      box.appendChild(tip);
-    }
-    for (const d of (ev.devices || [])) {
-      const row = document.createElement('div');
-      row.className = 'dec-item';
-      const a = document.createElement('div');
-      a.textContent = d.text || d.ip || d.mac || '未知设备';
-      const b = document.createElement('div');
-      b.className = 'dim';
-      b.textContent = `类型：${d.type || '未知'}${d.ip ? ' · IP：' + d.ip : ''}${d.mac ? ' · MAC：' + d.mac : ''}`;
-      row.appendChild(a);
-      row.appendChild(b);
-      box.appendChild(row);
-    }
+  }
+  for (const d of devices) {
+    const row = document.createElement('div');
+    row.className = 'dec-item';
+    const a = document.createElement('div');
+    a.textContent = d.text || d.ip || d.mac || '未知设备';
+    const b = document.createElement('div');
+    b.className = 'dim';
+    b.textContent = `类型：${d.type || '未知'}${d.ip ? ' · IP：' + d.ip : ''}${d.mac ? ' · MAC：' + d.mac : ''}`
+      + (d.maybeSelf ? ' · 可能是本机旧会话（随机硬件地址换过 MAC）' : '');
+    row.appendChild(a);
+    row.appendChild(b);
+    box.appendChild(row);
+  }
+  if (!devices.length) {
+    const none = document.createElement('div');
+    none.className = 'dim';
+    none.textContent = '（此刻还没有设备列表：同意后会先取回列表再自动解绑。）';
+    box.appendChild(none);
   }
   const btnC = $('btnDecContinue');
   const btnP = $('btnDecPause');
-  if (kind === 'self_logout') {
-    btnC.textContent = '同意注销并继续';
-    btnP.textContent = '暂不注销';
-  } else {
-    btnC.textContent = '解绑并继续';
-    btnP.textContent = '暂不解绑';
-  }
+  btnC.textContent = devices.length ? '解绑并继续' : (ev.selfLogout ? '注销后台并继续' : '继续并自动重试');
+  btnP.textContent = devices.length ? '暂不解绑' : '暂不处理';
   $('modalDecision').classList.remove('hidden');
 }
 
@@ -690,6 +722,13 @@ function renderDevices(devices, endpoints) {
       t2.textContent = '本机';
       t2.style.marginLeft = '4px';
       td1.appendChild(t2);
+    } else if (d.maybeSelf) {
+      const t2 = document.createElement('span');
+      t2.className = 'tag maybe-self';
+      t2.textContent = '可能本机';
+      t2.style.marginLeft = '4px';
+      t2.title = MAYBE_SELF_TIP;
+      td1.appendChild(t2);
     }
 
     const td2 = document.createElement('td');
@@ -826,7 +865,7 @@ async function selfSessionReady() {
  * opts.which: 'both'（默认，进入控制台/抢网结束）| 'devices'（状态变好）| 'usage'
  */
 async function refreshSelfPanels(silent, opts) {
-  if (state.mode !== 'server' || state.running) return;
+  if (state.mode !== 'server' || state.running || state.borrowBusy) return;
   if (document.hidden) return;
   if (state.panelsBusy) return;
   const which = (opts && opts.which) || 'both';
@@ -849,10 +888,94 @@ async function refreshSelfPanels(silent, opts) {
   }
 }
 
+/* ---------------- 借网查看（临时切校园网取一次实时数据） ----------------
+ * 场景：人在校园网外（或校园热点 HNIST）时，自助后台 172.31.8.43 不可达，
+ * 「刷新绑定设备 / 加载 IP 用量」必然超时。此时问用户一句：要不要临时切到
+ * HNIST-student 取一次实时数据？要就全自动：切网 → 登录（可能一次验证码）
+ * → 取设备+用量 → 注销自助后台（不留存）→ 自动切回原网络。
+ *
+ * 前端只负责「探测 → 询问 → 触发 → 收 SSE → 渲染」；切网与取数都在服务端，
+ * 因为只有服务端能调 wifiConnect / 拿到会话 Cookie。
+ * 与「一键抢网」严格互斥：借网期间禁用一键抢网按钮，服务端也会返回 409。
+ *
+ * 返回值约定：true = 本次点击已被「借网」分支接管（调用方别再走正常取数）；
+ *            false = 自助后台可达，按原流程继续。
+ */
+function setBorrowBusy(on) {
+  state.borrowBusy = !!on;
+  syncConnectBtn();
+  for (const id of ['btnDevRefresh', 'btnUsageRefresh']) {
+    const b = $(id);
+    if (b) b.disabled = !!on;
+  }
+}
+
+async function tryBorrowForPanels(which) {
+  if (state.mode !== 'server') return false;
+  if (state.borrowBusy) {
+    toast('正在借网查看，稍候…（取完会自动切回原网络）', 'err');
+    return true;
+  }
+  if (state.running) {
+    toast('正在一键抢网，等它跑完再借网查看', 'err');
+    return true;
+  }
+  let info;
+  try {
+    info = await api('/api/self/reachable');
+  } catch (e) {
+    toast(e.message, 'err');
+    return true;
+  }
+  if (info.reachable) return false;   // 自助后台通：走原本的登录/取数流程
+  if (info.borrowBusy) {
+    toast('服务端正在借网查看，稍候…', 'err');
+    return true;
+  }
+  const acc = state.accounts.find(a => a.id === $('accountSelect').value) || state.accounts[0];
+  if (!acc) { toast('请先在账号簿添加账号', 'err'); return true; }
+  const hintEl = which === 'usage' ? $('usageHint') : $('devHint');
+  // 本机没有校园网 Wi-Fi 配置 → 自动切不了，只能引导手动连一次
+  if (!info.hasCampusProfile) {
+    toast(`本机没有 ${info.campusSsid} 的 Wi-Fi 配置——先手动连一次校园网，再回来点刷新`, 'err');
+    if (hintEl) {
+      hintEl.textContent = `看不到实时数据：当前「${info.ssid || '未知网络'}」够不着校园网自助后台，`
+        + `且本机没有 ${info.campusSsid} 的 Wi-Fi 配置。先手动连一次校园网，之后这里就能一键借网查看。`;
+    }
+    return true;
+  }
+  const go = confirm(
+    '看不到实时数据：当前网络够不着校园网自助后台（172.31.8.43）。\n\n'
+    + `要临时切到「${info.campusSsid}」取一次实时数据吗？\n\n`
+    + '· 全自动：切网 → 登录后台（可能要输一次验证码）→ 取设备/用量\n'
+    + '· 取完立即注销自助后台（不留存会话），并自动切回你原来的网络\n'
+    + '· 期间不能一键抢网；结束后不影响一键抢网\n'
+    + '（切网用已保存的 Wi-Fi 配置，不用重新输密码）'
+  );
+  if (!go) {
+    if (hintEl) hintEl.textContent = '已取消借网查看。要看实时数据，可再点「刷新 / 加载」并选择借用校园网。';
+    return true;
+  }
+  if (hintEl) hintEl.textContent = '正在借网查看：切换到校园网 → 登录 → 取数 → 自动切回…（进度见左侧日志）';
+  try {
+    await api('/api/self/borrow', { accountId: acc.id });
+  } catch (e) {
+    toast(e.message, 'err');
+    if (hintEl) hintEl.textContent = '借网查看启动失败：' + e.message;
+    return true;
+  }
+  setBorrowBusy(true);
+  log(`—— 借网查看（${acc.username}）：临时切到 ${info.campusSsid} 取一次实时数据 ——`, 'hi');
+  toast('正在借网查看，取完会自动切回原网络', 'ok');
+  return true;
+}
+
 async function refreshDevices(opts) {
   const silent = !!(opts && opts.silent);
   const quietTime = (opts && opts.quietTime) || '';
   if (state.mode !== 'server') { renderDevices([], []); return; }
+  // 用户主动点刷新：先探自助后台是否可达；不可达就问要不要临时借校园网取一次实时数据
+  if (!silent && await tryBorrowForPanels('devices')) return;
   try {
     if (!(await ensureSelfLoginInteractive({ silent }))) return;
     const r = await api('/api/self/devices');
@@ -910,6 +1033,12 @@ function renderUsage(r) {
       s.className = 'tag self';
       s.textContent = '本机';
       head.appendChild(s);
+    } else if (ip.maybeSelf) {
+      const s = document.createElement('span');
+      s.className = 'tag maybe-self';
+      s.textContent = '可能本机';
+      s.title = MAYBE_SELF_TIP;
+      head.appendChild(s);
     }
     const noteEl2 = ipNoteEl(ip.ip);
     if (noteEl2) head.appendChild(noteEl2);
@@ -948,6 +1077,8 @@ async function loadUsage(opts) {
     if (!silent) toast('需启动本地服务', 'err');
     return;
   }
+  // 用户主动点加载：先探自助后台是否可达；不可达就问要不要临时借校园网取一次实时数据
+  if (!silent && await tryBorrowForPanels('usage')) return;
   const btn = $('btnUsageRefresh');
   if (btn && btn.disabled) return;
   if (btn && !silent) { btn.disabled = true; btn.textContent = '加载中…'; }
@@ -1055,6 +1186,29 @@ function handleEvent(e) {
     case 'devices':
       renderDevices(e.devices || [], e.endpoints || []);
       break;
+    case 'borrow_done': {
+      // 借网查看收尾：服务端已注销自助后台并切回原网络，这里只负责渲染与复位
+      setBorrowBusy(false);
+      const t = new Date().toTimeString().slice(0, 8);
+      const h1 = $('devHint');
+      const h2 = $('usageHint');
+      if (e.ok) {
+        if (e.devices) renderDevices(e.devices.devices || [], e.devices.endpoints || []);
+        if (e.usage) renderUsage(e.usage);
+        const n = (e.usage && e.usage.ips && e.usage.ips.length) || 0;
+        if (h1) h1.textContent = `借网查看完成（${t}）：已取到实时设备列表；自助后台已注销、网络已切回。`;
+        if (h2) h2.textContent = `借网查看完成（${t}）：共 ${n} 个 IP；自助后台已注销、网络已切回。`;
+        log('借网查看完成：设备与用量已更新，自助后台已注销、原网络已切回。', 'ok');
+        toast('借网查看完成，已自动切回原网络', 'ok');
+      } else {
+        const msg = e.error || '未知原因';
+        if (h1) h1.textContent = '借网查看失败：' + msg;
+        if (h2) h2.textContent = '借网查看失败：' + msg;
+        log('借网查看失败：' + msg, 'err');
+        toast('借网查看失败：' + msg, 'err');
+      }
+      break;
+    }
     case 'done':
       if (/未打通|围墙|请完成浏览器|门户登录页/.test(String(e.msg || ''))) {
         log(e.msg, 'warn');
@@ -1086,6 +1240,7 @@ function handleEvent(e) {
 
 async function doConnect() {
   if (state.running) return;
+  if (state.borrowBusy) { toast('正在借网查看，等它自动切回原网络后再抢网', 'err'); return; }
   const id = $('accountSelect').value;
   const acc = state.accounts.find(a => a.id === id);
   if (!acc) { toast('请先添加并选择账号', 'err'); $('btnAddAcct').click(); return; }
@@ -1618,6 +1773,14 @@ function bindEvents() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !modalSettings.classList.contains('hidden')) modalSettings.classList.add('hidden');
   });
+  // 「关于」面板：与设置同一套交互（点按钮开；点关闭 / 点背景 / Esc 关）
+  const modalAbout = $('modalAbout');
+  $('btnAbout').onclick = () => modalAbout.classList.remove('hidden');
+  $('btnAboutClose').onclick = () => modalAbout.classList.add('hidden');
+  modalAbout.onclick = (e) => { if (e.target === modalAbout) modalAbout.classList.add('hidden'); };
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !modalAbout.classList.contains('hidden')) modalAbout.classList.add('hidden');
+  });
   $('btnMask').onclick = () => {
     state.masked = !state.masked;
     document.body.classList.toggle('masked', state.masked);
@@ -1677,6 +1840,16 @@ function bindEvents() {
       toast(r.note || '已注销', 'ok');
       $('devHint').textContent = '已注销后台占用：点“刷新”重新加载设备。';
       $('usageHint').textContent = '已注销后台占用：点“加载”重新获取用量统计。';
+    } catch (e) { toast(e.message, 'err'); }
+  };
+
+  // 清理工具自己开的、没关干净的登录窗口（只认 --user-data-dir 带 cnal_ 的进程，
+  // 绝不按进程名全杀——那会杀掉用户自己开着的浏览器）
+  if ($('btnCleanBrowsers')) $('btnCleanBrowsers').onclick = async () => {
+    try {
+      const r = await api('/api/browsers/clean', {});
+      if (r.found) toast(`已清理 ${r.killed}/${r.found} 个残留登录窗口`, r.killed === r.found ? 'ok' : 'err');
+      else toast('没有发现残留的登录窗口', 'ok');
     } catch (e) { toast(e.message, 'err'); }
   };
 
@@ -1864,7 +2037,7 @@ async function init() {
     b.textContent = '当前为轻量模式：双击启动本地服务（启动校园网助手.bat）可解锁自动解绑、设备管理与密码加密保存。';
     b.className = 'banner';
     b.classList.remove('hidden');
-    for (const id of ['btnDevRefresh', 'btnUsageRefresh', 'btnWifiConnect', 'btnWifiRestore', 'ckDiag', 'btnDiagClear', 'btnClearPw', 'btnLogout', 'btnSelfLogout', 'btnTermLog', 'ckNetcheck', 'btnNetRun', 'btnHotspotOpen']) {
+    for (const id of ['btnDevRefresh', 'btnUsageRefresh', 'btnWifiConnect', 'btnWifiRestore', 'ckDiag', 'btnDiagClear', 'btnClearPw', 'btnLogout', 'btnSelfLogout', 'btnCleanBrowsers', 'btnTermLog', 'ckNetcheck', 'btnNetRun', 'btnHotspotOpen']) {
       const el = $(id);
       if (el) { el.disabled = true; el.title = '需要启动本地服务'; }
     }

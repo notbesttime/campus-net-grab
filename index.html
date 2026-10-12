@@ -47,6 +47,13 @@
           <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
         </svg>
       </button>
+      <button id="btnAbout" class="iconbtn" type="button" title="关于" aria-label="关于本工具">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M12 11v5.5"></path>
+          <path d="M12 7.6h.01"></path>
+        </svg>
+      </button>
       <span id="modeBadge" class="badge">检测运行模式…</span>
       <span id="netBadge" class="badge net unknown">状态未知</span>
     </div>
@@ -405,9 +412,22 @@
       </div>
 
       <div class="set-group">
+        <button type="button" class="set-group-title" data-key="maybeSelf" aria-expanded="false">标记「可能本机」是什么意思</button>
+        <div class="set-body hidden">
+          <ol class="steps">
+            <li>「绑定设备」表里除了 <b>本机</b>，还可能出现 <b>可能本机</b>：这条设备的 MAC 与本机当前网卡不同，但本机<b>以前用过</b>这个 MAC。</li>
+            <li>最常见的原因是 Windows 的 Wi-Fi <b>「随机硬件地址」</b>：同一张无线网卡在不同时间会用不同的 MAC。校园门户因此把同一台笔记本算成两台设备，抢网时还可能提示「账号 PC 名额被占用」——其实那是<b>你自己的旧会话</b>，不是别人。</li>
+            <li><b>怎么关：</b>系统设置 → 网络和 Internet → WLAN → 点你连的那个网络（如 HNIST-student）→ 把「随机硬件地址」设为<b>关闭</b>。关掉后 MAC 稳定，门户只认一台 PC，这类提示自然消失，也不会再出现「解绑了自己又要重登」的来回。</li>
+          </ol>
+          <div class="hint">工具只能根据<b>本机见过的 MAC 历史</b>做推测，所以标「可能」而不是「就是」；它只影响显示与提示文案，<b>不会自动替你解绑</b>。</div>
+        </div>
+      </div>
+
+      <div class="set-group">
         <div class="set-group-title">维护</div>
         <div class="set-row actions">
           <button id="btnSelfLogout" class="btn ghost" type="button" title="注销后台登录占用（为在此查看/解绑设备、显示各 IP 用量统计），不影响正常上网">注销自助后台</button>
+          <button id="btnCleanBrowsers" class="btn ghost" type="button" title="自动登录时会开一个临时浏览器窗口，正常应在结束后关闭；若因异常残留（半透明、点不动、关不掉），用它清理。只关本工具自己开的窗口，不会动你正在用的浏览器">清理残留登录窗口</button>
           <button id="btnLogout" class="btn ghost" type="button" title="注销网络认证会话：会断开上网，需重新一键抢网">注销上网(门户)</button>
           <button id="btnDiagClear" class="btn ghost" type="button">清除诊断信息</button>
           <button id="btnClearPw" class="btn ghost" type="button">清除所有保存的密码</button>
@@ -415,6 +435,38 @@
         <div class="hint">“诊断信息”是 diag 文件夹里的后台页面快照，仅用于解析问题排查；删除不影响账号、密码和任何功能（平时自动只留最近 20 个）。</div>
       </div>
       <div id="wifiHint" class="hint"></div>
+    </div>
+  </div>
+
+  <!-- 弹窗：关于（顶栏 ⓘ 按钮打开） -->
+  <div id="modalAbout" class="modal hidden">
+    <div class="mbox">
+      <div class="mhead">
+        <h3>关于</h3>
+        <button id="btnAboutClose" class="btn ghost tiny" type="button">关闭</button>
+      </div>
+      <div class="about-body">
+        <div class="about-ver">校园网抢抢抢 · v1.0.0<span class="about-sep">·</span>更新于 2026-10-08</div>
+        <p class="about-why">做一个一键抢网的小工具，初衷很简单：<b>原来借别人校园网的步骤太过麻烦</b>——手动连 WiFi、开浏览器、进门户、填账号密码、点登录，一步都省不掉。现在点一下就好。</p>
+        <div class="about-links">
+          <div class="about-row">
+            <span class="about-k">联系邮箱</span>
+            <a href="mailto:xingguang2482@outlook.com">xingguang2482@outlook.com</a>
+          </div>
+          <div class="about-row">
+            <span class="about-k">关于作者</span>
+            <a href="https://nobesttime.pages.dev/" target="_blank" rel="noopener noreferrer">nobesttime.pages.dev</a>
+          </div>
+          <div class="about-row">
+            <span class="about-k">VibeHub</span>
+            <a href="https://gamesvibe.app/users/lgCgEvUkNJ5h0ufs0HlXa9gMSo6kN60X" target="_blank" rel="noopener noreferrer">AI 游戏与应用，点开即玩 · 直达作者个人主页</a>
+          </div>
+          <div class="about-row">
+            <span class="about-k">请苿钰喝咖啡</span>
+            <a href="https://sponsorvxz.pages.dev/" target="_blank" rel="noopener noreferrer">sponsorvxz.pages.dev</a>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 

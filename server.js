@@ -18,6 +18,9 @@ const { writeFileAtomic, parseVaultText } = require('./lib/file-store');
 const { tcpProbe } = require('./lib/net-probe');
 const { applyNote, parseNotesText } = require('./lib/ip-notes');
 const { runCheck: runNetCheck } = require('./lib/net-quality');
+const { normMac, rememberMacs, macsFromHistoryRows, selfKind, shouldAutoUnbind } = require('./lib/self-id');
+const { createLease } = require('./lib/lease');
+const { occupancyPrompt } = require('./lib/occupancy-prompt');
 
 const PORT_START = 8787;
 const ROOT = __dirname;
@@ -26,6 +29,9 @@ const IP_NOTES_FILE = path.join(ROOT, 'ip-notes.json');
 const SESSION_FILE = path.join(ROOT, '.selfsession');
 const DIAG_DIR = path.join(ROOT, 'diag');
 const CONSOLE_URL_FILE = path.join(ROOT, 'console.url');
+// 本机历史上用过的 MAC（见 lib/self-id.js）。含真实 MAC，已进 .gitignore 与公开仓库排除清单。
+const MAC_HISTORY_FILE = path.join(ROOT, 'seen-macs.json');
+const MAC_HISTORY_MAX = 60;
 const OPEN_BROWSER = !process.env.NO_OPEN;
 const TOKEN = crypto.randomBytes(16).toString('hex');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CampusNetAssistant/1.0';
@@ -90,8 +96,8 @@ function decodeBody(buf, contentType) {
   if (enc === 'gb2312' || enc === 'gbk') enc = 'gbk';
   let s;
   try { s = new TextDecoder(enc).decode(buf); } catch { s = buf.toString('utf8'); }
-  if (s.includes('�')) {
-    try { const g = new TextDecoder('gbk').decode(buf); if (!g.includes('�')) s = g; } catch {}
+  if (s.includes('\uFFFD')) {
+    try { const g = new TextDecoder('gbk').decode(buf); if (!g.includes('\uFFFD')) s = g; } catch {}
   }
   return s;
 }
@@ -161,7 +167,7 @@ const PS_PRELUDE = 'Add-Type -AssemblyName System.Security; ';
 function decodePs(buf) {
   let s;
   try { s = new TextDecoder('gbk').decode(buf); } catch { s = buf.toString('utf8'); }
-  if (s.includes('�')) s = buf.toString('utf8');
+  if (s.includes('\uFFFD')) s = buf.toString('utf8');
   return s;
 }
 
@@ -344,20 +350,74 @@ function captivePortalUrl(macHex) {
 let manualPortal = null;
 let manualWatchTimer = null;
 
+/* ---------- 自开浏览器进程管理 ----------
+ * 三条纪律（2026-10-08 踩坑后固化）：
+ * 1) 必须杀整棵进程树：Windows 上 process.kill(pid) 只杀一个进程，Chromium 的
+ *    renderer/GPU 子进程会活下来——窗口还在、内容不画，就是我们看到的
+ *    「半透明、点不动、X 关不掉」的僵尸窗口。
+ * 2) 必须先确认进程退出、再删 profile 目录：反过来做（先删目录）会让还活着的
+ *    浏览器丢掉配置目录，立刻变成僵尸窗口。
+ * 3) 服务自己退出时也要收摊：否则窗口变孤儿，用户只能去任务管理器猜着杀。
+ */
+const spawnedBrowserPids = new Set();
+
+function trackBrowser(pid) { if (pid) spawnedBrowserPids.add(Number(pid)); }
+function untrackBrowser(pid) { if (pid) spawnedBrowserPids.delete(Number(pid)); }
+
+function killTreeSync(pid) {
+  if (!pid) return;
+  try {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
+    } else {
+      try { process.kill(-pid, 'SIGKILL'); } catch { try { process.kill(pid, 'SIGKILL'); } catch {} }
+    }
+  } catch {}
+}
+
+function killTree(pid) {
+  if (!pid) return Promise.resolve();
+  return new Promise(resolve => {
+    if (process.platform !== 'win32') { killTreeSync(pid); return resolve(); }
+    let done = false;
+    const fin = () => { if (!done) { done = true; resolve(); } };
+    try {
+      const p = spawn('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
+      p.on('exit', fin);
+      p.on('error', fin);
+      setTimeout(fin, 4000); // 兜底，绝不无限等
+    } catch { fin(); }
+  });
+}
+
+const sleepMs = ms => new Promise(r => setTimeout(r, ms));
+
+// 进程退出后再删 profile；删不掉（仍被占用）就留着，宁可留个临时目录也不要做僵尸窗口
+async function removeProfileSafely(profile) {
+  if (!profile) return;
+  for (let i = 0; i < 6; i++) {
+    try { fs.rmSync(profile, { recursive: true, force: true }); return; } catch { await sleepMs(300); }
+  }
+}
+
+function closeBrowserHandle(handle) {
+  if (!handle) return;
+  const { pid, profile } = handle;
+  killTree(pid).then(() => { untrackBrowser(pid); return removeProfileSafely(profile); }).catch(() => {});
+}
+
 function closeManualPortal() {
   if (manualWatchTimer) { clearInterval(manualWatchTimer); manualWatchTimer = null; }
   if (!manualPortal) return false;
   const p = manualPortal;
   manualPortal = null;
-  try { if (p.pid) process.kill(p.pid); } catch {}
-  try { if (p.profile) fs.rmSync(p.profile, { recursive: true, force: true }); } catch {}
+  closeBrowserHandle(p);
   return true;
 }
 
 function closeCapBrowser(handle) {
   if (!handle) return;
-  try { if (handle.pid) process.kill(handle.pid); } catch {}
-  try { if (handle.profile) fs.rmSync(handle.profile, { recursive: true, force: true }); } catch {}
+  closeBrowserHandle(handle);
 }
 
 function openCaptivePortal() {
@@ -376,6 +436,7 @@ function openCaptivePortal() {
     ], { detached: true, stdio: 'ignore', windowsHide: false });
     try { child.unref(); } catch {}
     manualPortal = { pid: child.pid, profile, exe, url };
+    trackBrowser(child.pid);
     log('已打开无痕门户窗口: ' + url + '（登录成功后会自动关闭）');
     watchManualPortal();
   } else {
@@ -417,6 +478,34 @@ function findBrowserExe() {
   ];
   for (const c of candidates) if (fs.existsSync(c)) return c;
   return null;
+}
+
+/* 只认「我们自己开的」浏览器：判据是命令行里带 --user-data-dir=<tmp>\cnal_cap_ / cnal_manual_。
+ * 绝不按进程名全杀——那会连用户自己开着的浏览器一起杀掉。 */
+function listLeftoverBrowsers() {
+  return new Promise(resolve => {
+    if (process.platform !== 'win32') return resolve([]);
+    const ps = [
+      "$ErrorActionPreference='SilentlyContinue';",
+      'Get-CimInstance Win32_Process -Filter "Name=\'msedge.exe\' or Name=\'chrome.exe\'" |',
+      "Where-Object { $_.CommandLine -match 'cnal_(cap|manual)_' } |",
+      'ForEach-Object { "$($_.ProcessId)|$($_.Name)" }',
+    ].join(' ');
+    let out = '';
+    let done = false;
+    const fin = () => { if (!done) { done = true; resolve(parseOut(out)); } };
+    const parseOut = s => String(s).split(/\r?\n/).map(l => l.trim()).filter(Boolean).map(l => {
+      const [pid, name] = l.split('|');
+      return { pid: Number(pid) || 0, name: name || '' };
+    }).filter(x => x.pid > 0);
+    try {
+      const p = spawn('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true });
+      p.stdout.on('data', d => { out += d.toString(); });
+      p.on('exit', fin);
+      p.on('error', fin);
+      setTimeout(fin, 8000);
+    } catch { fin(); }
+  });
 }
 
 class CdpSession {
@@ -562,6 +651,122 @@ async function campusReachable(timeoutMs) {
   };
 }
 
+/* 只探「自助后台」本身的 TCP 可达性——取设备/用量的硬前提。
+ * 与 campusReachable 的区别：那个把「门户可达」也算通过（用于判断是否在校园网），
+ * 这里必须精确到自助后台，因为在「门户通但校内服务不通」的网络上取数照样失败。 */
+async function selfReachable(timeoutMs) {
+  const s = cfgEndpoint(CFG.self, 8080);
+  if (!s.host) return { ok: false, ms: 0, host: '' };
+  const p = await tcpProbe(s.host, s.port, timeoutMs || 2000);
+  return { ok: !!p.ok, ms: p.ms, host: s.host };
+}
+
+/* ---------------- 借网查看：临时切校园网取一次数据 ----------------
+ * 场景（用户提需求的原话）：不在校园网时点「刷新绑定设备/IP 用量」取不到实时数据，
+ * 希望「问一次要不要切网，要就自动完成、自动切回，不影响后续一键抢网，
+ * 也不要产生自助后台的留存」。
+ *
+ * 流程：问用户（前端 confirm）→ 切 HNIST-student → 等连上并探到自助后台
+ *      → 登录（遇到会话冲突自动注销本机会话重试一次，不再问用户）
+ *      → 取设备 + 用量 → **注销自助后台（不留存）** → 自动切回原网络。
+ *
+ * 三条纪律：
+ *  1) 互斥：借网期间拒绝启动一键抢网（反之亦然），否则两个流程会互相切网；
+ *  2) 注销必须在切回之前——logout 请求要发到校内服务器，切走了就发不出去；
+ *  3) 一定切回：无论成功、失败还是取消，finally 里都要把原网络还回去。
+ */
+const borrow = { busy: false, startedAt: 0 };
+
+async function loginForBorrow(username, password) {
+  let lg = await self.ensureLogin(username, password, null);
+  for (let round = 0; round < 3; round++) {
+    if (lg.ok) return lg;
+    if (lg.needCaptcha) {
+      emit('log', { msg: '自助后台要验证码（借网查看每次都要：因为用完即注销，不留存会话）' });
+      emit('captcha', { img: lg.captchaB64 });
+      const code = await waitFor('captcha', 180000);
+      if (code === CANCELLED) return { ok: false, cancelled: true, tip: '已取消借网查看' };
+      if (!code) return { ok: false, tip: '验证码输入超时' };
+      lg = await self.login(username, password, code);
+      continue;
+    }
+    // 会话冲突：自动注销本机会话后重试一次，不再弹「是否注销」确认
+    if (round === 0 && /别处|会话|占用|失效|活跃|注销自助后台|未给出原因|登录失败/i.test(String(lg.tip || ''))) {
+      emit('log', { msg: '自助后台会话冲突：自动注销本机会话后重试一次' });
+      await forceSelfSessionReset();
+      lg = await self.ensureLogin(username, password, null);
+      continue;
+    }
+    break;
+  }
+  return lg;
+}
+
+async function borrowAndFetch(username, password) {
+  const wi0 = wifiInfo();
+  const from = (wi0 && wi0.ssid) || '';
+  borrow.busy = true;
+  borrow.startedAt = Date.now();
+  // C：借网期间独占自助登录（与抢网一致，避免 checkcode 被并发的「刷新」覆盖）
+  selfLoginLease.acquire('borrow', 300000);
+  // 结果先存下来，等 finally 收尾（注销 + 切回）全部做完再发 borrow_done。
+  // 为什么不能就地发：前端一收到 borrow_done 就解除「一键抢网」禁用，若此时网络还没切回去，
+  // 用户点抢网就会和「切回原网络」抢跑（2026-10-08 端到端测试暴露）。
+  let result = null;
+  try {
+    if (classifyNetwork(from).campus) {
+      emit('log', { msg: '当前已在校园网：直接取数，不需要切换' });
+    } else {
+      if (from && !(wi0.profiles || []).includes(CAMPUS_SSID)) {
+        throw new Error(`本机没有 ${CAMPUS_SSID} 的 Wi-Fi 配置——先手动连一次校园网，再回来借网`);
+      }
+      emit('log', { msg: `借网查看：从「${from || '当前网络'}」临时切到 ${CAMPUS_SSID}…` });
+      const c = wifiConnect(CAMPUS_SSID);
+      if (!c.ok) throw new Error(`切换到 ${CAMPUS_SSID} 失败：${c.msg}（附近有校园网信号吗？）`);
+    }
+
+    let reach = null;
+    for (let i = 0; i < 22; i++) {
+      await sleep(700);
+      const p = await selfReachable(2000);
+      if (p.ok) { reach = p; break; }
+    }
+    if (!reach) {
+      throw new Error(`切到 ${CAMPUS_SSID} 后仍够不着自助后台（多半需要先通过门户认证再去取数）`);
+    }
+    emit('log', { msg: `自助后台可达（${reach.ms}ms），登录中…` });
+
+    const lg = await loginForBorrow(username, password);
+    if (!lg.ok) throw new Error(lg.cancelled ? '已取消（用户点了取消）' : (lg.tip || '自助后台登录失败'));
+
+    const dev = await buildDevicesPayload();
+    emit('devices', { devices: dev.devices || [], endpoints: [], dashLines: [] });
+    const usage = await buildUsagePayload();
+    result = { ok: true, at: now(), from, devices: dev, usage };
+  } catch (e) {
+    result = { ok: false, at: now(), from, error: e.message || String(e) };
+  } finally {
+    // 不留存：先注销（此刻还在校园网内，注销请求才发得出去）
+    try { await self.http.request('GET', `${CFG.self}/Self/login/logout`, { timeout: 8000 }); } catch {}
+    // 清干净「本机不留存」：登录态、会话文件、缓存的设备列表、以及遗留的账号身份
+    try { self.loggedIn = false; self.sessionUser = ''; self.account = ''; self.http = new Http(); self.clearSessionFile(); self.lastDevices = []; } catch {}
+    emit('log', { msg: '已注销自助后台会话（不留存）' });
+    // 一定切回原网络
+    if (from && from !== CAMPUS_SSID) {
+      await sleep(600);
+      const r = wifiConnect(from);
+      emit('log', { msg: r.ok ? `已自动切回「${from}」` : `切回「${from}」失败：${r.msg}（可点控制台里的「切回原网络」重试）` });
+    }
+    // 刻意不动 lastWifiSwitch：那是「一键抢网切走后，用户手动切回」的账本，借网自己已经把网络
+    // 还回去了，两边各管各的。这里若顺手清掉，会在「校园 SSID 但自助后台恰好不通」时抹掉用户
+    // 真正的切回点（少见但真实），代价大于收益。
+    borrow.busy = false;
+    selfLoginLease.release('borrow');
+    // 最后一步才宣告结束：此时会话已注销、网络已还原，前端可以安全地重新启用一键抢网
+    emit('borrow_done', result || { ok: false, at: now(), from, error: '借网查看异常结束' });
+  }
+}
+
 /* 最近一次「为抢网而切走的网络」，只供用户手动切回，绝不自动恢复 */
 let lastWifiSwitch = null;
 
@@ -679,8 +884,13 @@ async function captiveAutoLogin(username, suffix, password, onLog) {
   ], { detached: true, stdio: 'ignore', windowsHide: false });
   try { capChild.unref(); } catch {}
   const capHandle = { pid: capChild.pid, profile, exe };
+  trackBrowser(capChild.pid);
 
+  let cdp = null;
+  let captiveClosed = false;
   const closeCaptiveBrowser = async () => {
+    if (captiveClosed) return;
+    captiveClosed = true;
     try { if (cdp && cdp.ws) await cdp._send('Browser.close').catch(() => {}); } catch {}
     try { if (cdp && cdp.ws) { cdp.ws.onmessage = null; cdp.ws.close(); } } catch {}
     closeCapBrowser(capHandle);
@@ -697,14 +907,20 @@ async function captiveAutoLogin(username, suffix, password, onLog) {
     } catch {}
     await sleep(150);
   }
-  if (!pages || !pages.length) throw new Error('浏览器调试端口未就绪，无法自动填登录');
+  if (!pages || !pages.length) {
+    await closeCaptiveBrowser();
+    throw new Error('浏览器调试端口未就绪，无法自动填登录');
+  }
 
   let page = pages.find(p => p.type === 'page' && /hnist|msftconnecttest|generate_204|msn\.cn|firefox|about:blank/i.test(p.url || ''))
     || pages.find(p => p.type === 'page' && !/chrome-extension|devtools|chrome-error/i.test(p.url || ''))
     || pages.find(p => p.type === 'page');
-  if (!page) throw new Error('未找到可控制的浏览器页面');
+  if (!page) {
+    await closeCaptiveBrowser();
+    throw new Error('未找到可控制的浏览器页面');
+  }
 
-  const cdp = new CdpSession();
+  cdp = new CdpSession();
   const safePickExpr = `
     const pick = (sel) => { try { return document.querySelector(sel); } catch (e) { return null; } };
     const pickAll = (sel) => { try { return [...document.querySelectorAll(sel)]; } catch (e) { return []; } };
@@ -1135,7 +1351,9 @@ async function captiveAutoLogin(username, suffix, password, onLog) {
     }
     return { ok: false, msg: 'Captive 登录后仍未检测到在线（请检查是否连 HNIST-student）', via: 'captive-browser' };
   } finally {
-    cdp.close();
+    // 无论成功失败都要收摊：失败分支曾经直接 return，窗口留在桌面上没人管
+    try { if (cdp) cdp.close(); } catch {}
+    await closeCaptiveBrowser();
   }
 }
 
@@ -1537,10 +1755,28 @@ class SelfClient {
       this.saveSession();
       return { ok: true };
     }
+    // D：失败文案不再一律「按顺序排查」——先探自助后台是否可达，据此给**具体**原因，
+    //    用户一眼能判断该做什么（连校园网 / 重输验证码 / 注销后台）。
+    let reach = null;
+    try { reach = await selfReachable(1500); } catch {}
+    let fallback;
+    if (reach && !reach.ok) {
+      fallback = '连不上自助后台（' + CFG.self + '）：当前多半不在校园网 ' + CAMPUS_SSID
+        + ' 上——先连上校园网再登录。';
+    } else {
+      fallback = '自助后台可达，但登录被服务器退回（未给原因）。最可能是：'
+        + '① 验证码过期/输错 → 再输一次即可；'
+        + '② 浏览器或本机还留着旧的自助后台会话 → 到「设置」点「注销自助后台」后重试。';
+    }
+    // 静默退回：POST 后被弹回登录页，页面上却**没有任何原因**（`errorTip` 为空）。
+    // 实测（diag/self_login_verify）这种形状来自「旧会话占用」或「checkcode 已被消费」，
+    // 换一张新验证码重试通常就过。这里只如实标注，是否重试交给调用方决定（见 selfLoginOnce）。
+    const bounced = backToLogin && !tip;
     return {
       ok: false,
-      tip: tip || '登录失败（服务器无提示）：常见原因是该账号在别处仍有活跃的后台会话——请点右上角齿轮「设置」里的“注销自助后台”再试，或等约半小时会话过期',
+      tip: tip || fallback,
       needCaptcha: false,
+      bounced,
       captchaB64: this.captchaB64,
     };
   }
@@ -1656,6 +1892,7 @@ class SelfClient {
   /* 用量报表：getLoginHistory + 账单-上网记录页（结构自发现） */
   async fetchUsageReport() {
     const out = { sources: [], rows: [] };
+    let rawLogRows = []; // P2③：原始上网记录行（对象，字段名 macAddress），用于补 MAC 历史
 
     /* 1) 仪表盘“近期上网记录”：0上线 1注销 2IP 3MAC 4时长(分) 5流量(M) 6终端 */
     try {
@@ -1716,12 +1953,31 @@ class SelfClient {
           rows = r2;
         }
         const norm = normalizeRowsByCols(cols, all);
+        rawLogRows = all;
         out.rows = out.rows.concat(norm);
         if (norm.length) out.sources.push(`上网记录 userOnlineLog(${norm.length}条${pages > 1 ? `/${pages}页` : ''})`);
       }
     } catch (e) { out.logError = e.message; }
 
+    // P2③：把本账号**上网历史里出现过的 MAC** 并入「本机历史」。
+    // WHY：原历史只记「本机当前网卡 MAC」，换过随机 MAC 的自家旧会话认不出来，
+    //      会被当成「别人的设备」反复要用户确认。上网记录只属于本账号，正是「本账号用过的设备」。
+    try {
+      const added = addToMacHistory(macsFromHistoryRows(out.rows.concat(rawLogRows)));
+      if (added) out.macHistoryAdded = added;
+    } catch { /* 采集失败不影响报表 */ }
+
     return out;
+  }
+
+  /** 只取本账号上网历史里的 MAC（供抢网预检「认出自家旧会话」用）；失败返回 [] */
+  async fetchLoginHistoryMacs() {
+    const r = await this.http.request('GET', `${CFG.self}/Self/dashboard/getLoginHistory`, { timeout: 12000 });
+    diagDump('self_getLoginHistory', r.text, true);
+    let data;
+    try { data = JSON.parse(r.text); } catch { return []; }
+    const rows = Array.isArray(data) ? data : (data.rows || []);
+    return macsFromHistoryRows(rows);
   }
 }
 
@@ -1957,8 +2213,43 @@ function normalizeRowsByCols(cols, rows) {
 }
 
 /* ---------------- 本机标识（用于区分“自己的设备”） ---------------- */
+
+/* MAC 历史（本机历史上用过的 MAC）。
+ * 为什么需要：Windows 的 Wi-Fi「随机硬件地址」会换掉整个 MAC，只比对本机**当前**网卡
+ * 认不出「本机自己的旧会话」，会把它误报成「其他设备在线」（见踩坑 §19.4 / lib/self-id.js）。
+ * 只在真的有新 MAC 时才落盘，正常运行时几乎零写入。 */
+let macHistory = null;
+
+function loadMacHistory() {
+  if (macHistory) return macHistory;
+  macHistory = new Set();
+  try {
+    const j = JSON.parse(fs.readFileSync(MAC_HISTORY_FILE, 'utf8'));
+    for (const m of (j && j.macs) || []) { const k = normMac(m); if (k) macHistory.add(k); }
+  } catch { /* 首次运行 / 文件缺失或损坏：从空开始，不打断任何流程 */ }
+  return macHistory;
+}
+
+/** 把一批 MAC 并入历史；有新条目才写盘。返回**新增条数**（0 = 无需落盘） */
+function addToMacHistory(macs) {
+  const h = loadMacHistory();
+  const added = rememberMacs(h, macs, MAC_HISTORY_MAX);
+  if (added) {
+    try {
+      writeFileAtomic(MAC_HISTORY_FILE, JSON.stringify({ at: new Date().toISOString(), macs: [...h] }, null, 2), 'utf8');
+    } catch { /* 写不进去不影响功能，只是少一条历史 */ }
+  }
+  return added;
+}
+
+/** 把本机当前 MAC 并入历史；返回合并后的历史集合 */
+function rememberLocalMacs(hexList) {
+  addToMacHistory(hexList);
+  return loadMacHistory();
+}
+
 function localInfo() {
-  const macs = new Set(), ips = new Set();
+  const macs = new Set(), macsHex = new Set(), ips = new Set();
   const skip = /vmware|veth|virtual|loopback|bluetooth|tap|hyper-?v|vEthernet|vmnet/i;
   for (const [name, list] of Object.entries(os.networkInterfaces())) {
     for (const ni of list || []) {
@@ -1966,13 +2257,27 @@ function localInfo() {
       // 虚拟网卡 MAC 不参与“是否本机”判定，避免误匹配 VMware
       if (skip.test(name + ' ' + ni.mac)) continue;
       macs.add(ni.mac.toLowerCase().replace(/-/g, ':'));
+      const k = normMac(ni.mac);
+      if (k) macsHex.add(k);
       if (ni.family === 'IPv4' && !String(ni.address || '').startsWith('169.254')) ips.add(ni.address);
     }
   }
   // 无论如何把真实 WLAN/有线 MAC 放进去
   const real = localMacHex();
-  if (real) macs.add(real.toLowerCase().replace(/(.{2})(?=.)/g, '$1:'));
-  return { macs, ips };
+  if (real) {
+    macs.add(real.toLowerCase().replace(/(.{2})(?=.)/g, '$1:'));
+    const k = normMac(real);
+    if (k) macsHex.add(k);
+  }
+  // seen = 当前 + 历史。用于把「本机旧会话」标出来（弱证据：默认只标注；
+  // 仅当占用**全部**为 maybeSelf 时，shouldAutoUnbind 才会自动解绑——见 lib/self-id.js）
+  const seen = rememberLocalMacs(macsHex);
+  return { macs, macsHex, ips, seen };
+}
+
+/** 一条设备/会话与本机的关系：'self' | 'maybe'（可能是本机旧会话）| '' */
+function selfState(mac, ip, local) {
+  return selfKind({ mac, ip }, local || localInfo());
 }
 
 function isSelfDevice(dev, local) {
@@ -2062,6 +2367,9 @@ function wifiConnect(name) {
 
 /* ---------------- 连接任务（SSE 日志流） ---------------- */
 const self = new SelfClient();
+// C：自助登录互斥租约。`self` 的 checkcode/cookie 是所有登录流程共享的，
+//    并发登录会互相覆盖 checkcode（服务端静默弹回登录页）。租约保证同一时刻只有一方在登录。
+const selfLoginLease = createLease();
 const job = { running: false, events: [], sse: new Set() };
 
 function emit(type, data = {}) {
@@ -2096,11 +2404,18 @@ function cancelledError(msg) {
 async function runConnect(payload) {
   job.running = true;
   job.events = [];
+  // C：整个抢网期间独占自助登录（含等待用户输验证码的那几十秒），期间「刷新」等入口会被 409。
+  // 租约 10 分钟：占用自救流程里验证码最多提示 2 次（每次最长等 180s）+ 最多 3 次 captive 登录，
+  // 300s 在极端路径会提前过期，让「刷新」按钮在任务进行中抢到 checkcode → 又回到静默退回（踩坑 §19.11）。
+  selfLoginLease.acquire('connect', 600000);
   try { fs.writeFileSync(path.join(ROOT, 'job_last.log'), ''); } catch {}
   const state = { detect: 'pending', precheck: 'pending', unbind: 'pending', portal: 'pending', verify: 'pending' };
   emit('start', { state: { ...state } });
   const setStep = (k, status, note = '') => { state[k] = status; emit('step', { step: k, status, note, state: { ...state } }); };
   const finish = (ok, msg) => { emit(ok ? 'done' : 'paused', { msg }); };
+  // P3：阶段耗时（排查/回归时一眼看出慢在哪一步）
+  let __t = Date.now();
+  const tick = (name) => { const d = Date.now() - __t; __t = Date.now(); emit('log', { msg: `[计时] ${name} ${d}ms` }); };
 
   try {
     /* 0. 一键抢网：优先自动切到校园网 HNIST-student */
@@ -2132,19 +2447,28 @@ async function runConnect(payload) {
     /* 1. 状态检测 */
     setStep('detect', 'running');
     let st = null, nc = null;
-    try { st = await portalStatus(); } catch (e) { emit('warn', { msg: '门户状态检测失败：' + e.message }); }
-    try { nc = await ncsiCheck(); } catch {}
+    // 两个探测相互独立（门户 HTTPS vs NCSI HTTP），并行发出，省掉一次串行等待；
+    // 断网时 ncsiCheck 会走满 6s 超时，并行后不必再叠在 portalStatus 后面。
+    {
+      const [stR, ncR] = await Promise.allSettled([portalStatus(), ncsiCheck()]);
+      if (stR.status === 'fulfilled') st = stR.value;
+      else emit('warn', { msg: '门户状态检测失败：' + ((stR.reason && stR.reason.message) || stR.reason) });
+      if (ncR.status === 'fulfilled') nc = ncR.value;
+    }
     // 测试网址登录后有数秒滞后：在线状态下多等几轮再决定（避免“已在线还去重登”撞 clientip online）
     if (st && st.online && !(nc && nc.ok)) {
+      // 先探后睡：刚登录的场景可能立刻就通，先 sleep 会白等 2s（verify 段的围墙花园轮询已是这样）
       for (let i = 0; i < 5 && !(nc && nc.ok); i++) {
-        await sleep(2000);
         try { nc = await ncsiCheck(); } catch {}
+        if (nc && nc.ok) break;
+        await sleep(2000);
       }
     }
     if (st && st.online && nc && nc.ok) {
       setStep('detect', 'ok', '已在线 ' + st.uid);
       setStep('precheck', 'skip'); setStep('unbind', 'skip'); setStep('portal', 'skip');
       setStep('verify', 'ok', '测试网址通过');
+      tick('检测在线');
       return finish(true, `网络已在线（${st.uid}），无需重新登录`);
     }
     // 门户在线但数据不通：不要在这里退出（否则会永远提示“请点一键抢网”却不自动填密）
@@ -2155,6 +2479,7 @@ async function runConnect(payload) {
     } else {
       setStep('detect', 'ok', '当前未在线');
     }
+    tick('检测在线');
 
     /* 取凭据 */
     const acc = payload.accountId ? accountById(payload.accountId) : null;
@@ -2167,89 +2492,121 @@ async function runConnect(payload) {
     }
     if (!username || !password) throw new Error('缺少账号或密码（请先在账号簿保存密码，或在弹窗中输入）');
 
-    /* 2. 预检：自助服务查在线设备（会话冲突时弹窗确认注销后台） */
+    /* 2. 预检：自助服务查在线设备（失败先静默重试；占用/会话冲突的确认与自救全部合并到 handleOccupancy） */
     setStep('precheck', 'running');
     let others = [];
-    const askSelfLogout = async (reasonMsg) => {
-      emit('decision', {
-        kind: 'self_logout',
-        hint: reasonMsg || '自助后台会话被占用（可能在别处登录）。是否注销自助后台会话后继续抢网？',
-        detail: '同意后：注销后台登录占用 → 继续一键抢网。该操作不影响上网账号本身。',
-        devices: [],
-      });
-      setStep('precheck', 'wait', '等待确认：是否注销自助后台');
-      return await waitFor('decision', 180000);
+    /* 验证码提示全程最多两次：一次正常输入 + 一次「被后台静默退回」的换码重试。
+     * 输错验证码仍然只弹一次（人工成本高，反复弹会让人以为验证码永远输不完）；
+     * 但服务器**不说原因**地把登录弹回登录页时，让用户回去再点一次「一键抢网」代价更大。 */
+    let captchaAsked = 0;
+    let captchaRetriedBounce = false;
+    const askCaptchaOnce = async (img, note, stepName) => {
+      captchaAsked++;
+      emit('captcha', { img });
+      setStep(stepName || 'precheck', 'wait', note || '自助服务登录：请输入验证码');
+      const code = await waitFor('captcha', 180000);
+      if (code === CANCELLED) throw cancelledError('已取消：等待验证码时用户点了取消，本次抢网已停止');
+      return code || '';
     };
-    const loginWithCaptchaLoop = async (roundNote) => {
-      let lg = await self.ensureLogin(username, password, null);
-      for (let i = 0; i < 4; i++) {
-        if (lg.ok) return lg;
-        if (lg.needCaptcha) {
-          emit('captcha', { img: lg.captchaB64 });
-          setStep('precheck', 'wait', roundNote + '：请输入验证码');
-          const code = await waitFor('captcha', 180000);
-          if (code === CANCELLED) throw cancelledError('已取消：等待验证码时用户点了取消，本次抢网已停止');
-          if (!code) return { ok: false, tip: '验证码输入超时', needCaptcha: false };
-          lg = await self.login(username, password, code);
-          continue;
-        }
-        const conflict = /别处|会话|占用|无提示|失效|活跃|注销自助后台/i.test(String(lg.tip || ''));
-        if (conflict) return lg;
-        return lg;
+    const selfLoginOnce = async (note, presetCaptcha, stepName) => {
+      let lg = await self.ensureLogin(username, password, presetCaptcha || null);
+      if (!lg.ok && lg.needCaptcha && captchaAsked === 0) {
+        const code = await askCaptchaOnce(lg.captchaB64, note, stepName);
+        if (!code) return { ok: false, tip: '验证码输入超时', needCaptcha: false };
+        lg = await self.login(username, password, code);
+      }
+      // 被后台静默退回（回到登录页且没给任何原因）→ 换一张新验证码再给用户一次机会，只做一次。
+      if (!lg.ok && lg.bounced && !captchaRetriedBounce) {
+        captchaRetriedBounce = true;
+        emit('log', { msg: '自助后台把登录静默退回登录页（未给原因）：换一张验证码再试一次…' });
+        let freshImg = null;
+        try { await self.openLogin(); await self.fetchCaptcha(); freshImg = self.captchaB64; } catch {}
+        if (!freshImg) return lg; // 连新验证码图都拿不到 → 别弹空图让用户干等，直接返回原结果
+        const code = await askCaptchaOnce(freshImg,
+          '上一次自助登录被后台静默退回（旧会话没退干净 / 验证码已过期），请再输一次验证码', stepName);
+        if (!code) return { ok: false, tip: '验证码输入超时', needCaptcha: false };
+        lg = await self.login(username, password, code);
       }
       return lg;
     };
+    const isSelfSessionConflict = tip => /别处|会话|占用|无提示|失效|活跃|注销自助后台|未给出原因|登录失败/i.test(String(tip || ''));
+    // 预检专用：**静默**登录，绝不弹验证码。顺畅路径（绝大多数）根本不需要解绑，
+    // 不该为了预检打断用户输验证码；真被名额挡住时，占用分支会再登录一次（那时才弹）。
+    const selfLoginQuiet = async presetCaptcha => {
+      const r = await self.ensureLogin(username, password, presetCaptcha || null);
+      if (r.ok) return r;
+      return { ok: false, needCaptcha: !!r.needCaptcha, tip: r.needCaptcha ? '需要验证码' : (r.tip || '') };
+    };
 
-    let lg = await self.ensureLogin(username, password, payload.captcha);
-    if (!lg.ok && lg.needCaptcha) {
-      emit('captcha', { img: lg.captchaB64 });
-      setStep('precheck', 'wait', '需要输入验证码');
-      const code = await waitFor('captcha', 180000);
-      if (code === CANCELLED) throw cancelledError('已取消：等待验证码时用户点了取消，本次抢网已停止');
-      if (!code) throw new Error('验证码输入超时');
-      lg = await self.login(username, password, code);
-    }
-    // 会话冲突：先自动注销一次；仍失败/注销无效 → 弹窗问用户是否注销自助后台
-    if (!lg.ok && /别处|会话|占用|无提示|失效|活跃|注销自助后台/i.test(String(lg.tip || ''))) {
-      emit('log', { msg: '自助后台会话冲突：先尝试自动注销后台…' });
+    // 预检：只尝试「复用已有会话 / 静默登录」，成功就顺手拿设备列表；
+    // 需要验证码就**安静跳过**（不弹窗、不阻塞），直接去门户登录——被拒时再回来处理。
+    let lg = await selfLoginQuiet(payload.captcha);
+    if (!lg.ok && isSelfSessionConflict(lg.tip)) {
+      emit('log', { msg: '自助服务未登录（疑似会话冲突）：自动注销本机会话后静默重试一次…' });
       await forceSelfSessionReset();
-      lg = await loginWithCaptchaLoop('自动注销后重试');
-      if (!lg.ok) {
-        emit('log', { msg: '自动注销后仍无法预检：弹窗询问是否注销自助后台' });
-        const act = await askSelfLogout(String(lg.tip || '') + '。是否注销自助后台会话后继续抢网？');
-        if (act === 'continue') {
-          emit('log', { msg: '用户同意：注销自助后台并继续抢网' });
-          setStep('precheck', 'running', '注销自助后台中…');
-          await forceSelfSessionReset();
-          lg = await loginWithCaptchaLoop('用户确认注销后重试');
-        } else {
-          emit('log', { msg: '用户未确认注销后台：跳过预检，仍尝试门户 Captive 登录' });
-          lg = { ok: false, tip: '用户未确认注销自助后台，已跳过预检' };
-        }
-      }
+      lg = await selfLoginQuiet();
     }
     if (!lg.ok) {
-      emit('warn', { msg: '自助服务登录失败，跳过预检直接尝试门户登录：' + (lg.tip || '未知原因') });
-      setStep('precheck', 'warn', '预检跳过（可点右上角齿轮「设置」→「注销自助后台」后再试）');
+      emit('log', { msg: '自助服务暂未登录（需要验证码）：跳过预检，直接登录门户；只有在被名额挡住时才请你输一次验证码。' });
+      setStep('precheck', 'skip', '跳过预检（未登录自助服务）');
       setStep('unbind', 'skip');
     } else {
-      let dashLines = [], devList = [];
-      try { dashLines = summarizePage(await self.get('/Self/dashboard', true)); }
-      catch (e) { emit('warn', { msg: '读取仪表盘失败：' + e.message }); }
-      try { devList = await self.loadMacList(); }
-      catch (e) {
-        emit('warn', { msg: 'getMacList 失败，回退页面解析：' + e.message });
-        try { devList = parseDevices(await self.get('/Self/service/myMac', true)).devices; }
-        catch (e2) { emit('warn', { msg: '读取绑定列表失败：' + e2.message }); }
+      // P1-b：三个 GET 相互独立（dashboard / myMac+getMacList / getOnlineList），并发发出以省往返。
+      // 并发若被服务端限制（任一硬失败），退回串行重走一遍，保证与旧行为一致、不丢结果。
+      const grab = fn => (async () => { try { return { v: await fn() }; } catch (e) { return { e }; } })();
+      const grabMac = async () => {
+        try { return { v: await self.loadMacList() }; }
+        catch (e) {
+          try { return { v: parseDevices(await self.get('/Self/service/myMac', true)).devices, warn: 'getMacList 失败，回退页面解析：' + e.message }; }
+          catch (e2) { return { e: e2, warn: 'getMacList 失败(' + e.message + ')，回退页面解析也失败：' + e2.message }; }
+        }
+      };
+      const [dR, mR, sR] = await Promise.all([
+        grab(() => self.get('/Self/dashboard', true).then(summarizePage)),
+        grabMac(),
+        grab(() => self.getOnlineSessions()),
+      ]);
+      let dashLines = [], devList = [], onlineSessions = [];
+      if (dR.e || mR.e || sR.e) {
+        // 并发疑似被服务端拒绝：退回串行（旧行为），逐项容错、照常出告警。
+        emit('log', { msg: '预检并发请求未全部成功，改为串行重试一次…' });
+        try { dashLines = summarizePage(await self.get('/Self/dashboard', true)); }
+        catch (e) { emit('warn', { msg: '读取仪表盘失败：' + e.message }); }
+        try { devList = await self.loadMacList(); }
+        catch (e) {
+          emit('warn', { msg: 'getMacList 失败，回退页面解析：' + e.message });
+          try { devList = parseDevices(await self.get('/Self/service/myMac', true)).devices; }
+          catch (e2) { emit('warn', { msg: '读取绑定列表失败：' + e2.message }); }
+        }
+        try { onlineSessions = await self.getOnlineSessions(); } catch {}
+      } else {
+        dashLines = dR.v;
+        devList = mR.v;
+        if (mR.warn) emit('warn', { msg: mR.warn });
+        onlineSessions = sR.v;
       }
-      let onlineSessions = [];
-      try { onlineSessions = await self.getOnlineSessions(); } catch {}
 
-      const local = localInfo();
+      let local = localInfo();
       self.lastDevices = devList;
+      // P2③：出现「**不认识的 PC 占用**」时，才多拉一次本账号上网历史来补 MAC，然后重建判定。
+      // WHY：seen-macs 只记「本机当前网卡 MAC」，换过随机 MAC 的自家旧会话（如 183d2d…）不在里面，
+      //      会被当成「别人的设备」反复要用户确认。上网记录只属于本账号，正是「本账号用过的设备」。
+      // 代价控制：顺畅路径（无占用 / 占用已能识别）**不产生任何额外请求**，只在真需要时才拉一次。
+      try {
+        const hasUnknownPc = onlineSessions.some(s =>
+          s.ip && /PC/i.test(String(s.term || '')) && selfState(s.mac, s.ip, local) === '');
+        if (hasUnknownPc) {
+          const hist = await self.fetchLoginHistoryMacs();
+          const added = addToMacHistory(hist);
+          if (added) {
+            local = localInfo(); // 重建 seen（含刚补充的历史 MAC）
+            emit('log', { msg: `从上网历史补充 ${added} 条本机曾用 MAC，用于识别「自己的旧会话」` });
+          }
+        }
+      } catch (e) { emit('warn', { msg: '读取上网历史补充 MAC 失败：' + e.message }); }
       // 占用判定以“真实在线会话(getOnlineList)”为准；绑定列表的在线标记会滞后，曾导致误弹
-      const isSelfSess = s => (s.ip && local.ips.has(s.ip)) ||
-        (s.mac && local.macs.has(String(s.mac).toLowerCase().replace(/[:-]/g, ':')));
+      const sessKind = s => selfState(s.mac, s.ip, local);
+      const isSelfSess = s => sessKind(s) === 'self';
       // 学校配额 = 1台PC + 1台手机：我们是电脑，自动流程只盯 PC；
       // 手机在线不占 PC 名额 → 不检测、不解绑（设备表里仍可单独手动解绑）
       const isPCSess = s => /PC/i.test(String(s.term || ''));
@@ -2264,35 +2621,73 @@ async function runConnect(payload) {
           (s.ip && d.ip === s.ip) ||
           (s.mac && d.mac && String(d.mac).toLowerCase().replace(/[:-]/g, ':') === String(s.mac).toLowerCase().replace(/[:-]/g, ':')));
         const type = detectTermType(mt) !== '未知' ? detectTermType(mt) : (match ? match.type : '未知');
+        // MAC 不在本机当前网卡、但本机以前用过 → 大概率是自己（随机硬件地址换过 MAC），
+        // 不是「别人在占」。只做标注与提示，不影响后面是否解绑的决策。
+        const maybeSelf = sessKind(s) === 'maybe';
         return {
-          text: `在线中 · ${type} · ${s.ip}${s.loginTime ? ' · 上线 ' + s.loginTime : ''}`,
+          text: `在线中 · ${type} · ${s.ip}${s.loginTime ? ' · 上线 ' + s.loginTime : ''}`
+            + (maybeSelf ? '（可能是本机旧会话）' : ''),
           ip: s.ip,
           mac: s.mac || (match ? match.mac : ''),
           type,
           online: true,
+          maybeSelf,
           action: match && match.action ? match.action : null,
         };
       });
+      const maybeSelfCount = others.filter(d => d.maybeSelf).length;
 
       emit('devices', {
         devices: devList.map(d => ({
           text: d.text, ip: d.ip, mac: d.mac, type: d.type,
           online: typeof d.online === 'boolean' ? d.online : null, isSelf: isSelfDevice(d, local),
+          maybeSelf: selfState(d.mac, d.ip, local) === 'maybe',
         })),
         endpoints: [],
         dashLines,
       });
 
       if (others.length) {
-        setStep('precheck', 'ok', `有 ${others.length} 台其他设备在线（先直接登录，不影响就无需处理）`);
+        setStep('precheck', 'ok', maybeSelfCount
+          ? `有 ${others.length} 条其他 PC 会话（其中 ${maybeSelfCount} 条可能是本机旧会话）`
+          : `有 ${others.length} 台其他设备在线（先直接登录，不影响就无需处理）`);
         emit('log', { msg: '其他在线设备：' + others.map(d => d.text).join('；') });
       } else {
         setStep('precheck', 'ok', '无其他设备在线');
       }
     }
 
+    tick('预检');
+
     /* 3. 门户登录——主路径 = captive 浏览器自动填密；裸接口仅作兑底 */
     setStep('unbind', 'skip', others.length ? '登录受阻才会解绑' : '无需解绑');
+
+    /* B：门户的「只允许一台设备」看的是**在线会话**（getOnlineList），不是解绑记录（getMacList）。
+       解绑成功 ≠ 会话下线，所以解绑后要轮询到目标会话真的消失，再去登录门户——
+       否则就是「解绑了还是被拒、要多点几次」。 */
+    const waitOnlineSessionsGone = async (list, timeoutMs) => {
+      const keys = (list || [])
+        .map(d => String((d && d.mac) || '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase())
+        .filter(Boolean);
+      if (!keys.length) return true;
+      const t0 = Date.now();
+      let waited = 0;
+      while (Date.now() - t0 < timeoutMs) {
+        await sleep(2000);
+        waited = Date.now() - t0;
+        let sess;
+        try { sess = await self.getOnlineSessions(); }
+        catch { continue; } // 读不到就继续等，别把「读失败」当成「已下线」
+        const still = sess.filter(s => keys.includes(String((s && s.mac) || '').replace(/[^0-9A-Fa-f]/g, '').toLowerCase()));
+        if (!still.length) {
+          emit('log', { msg: `解绑后等待 ${Math.round(waited / 1000)}s：占用会话已下线` });
+          return true;
+        }
+        setStep('unbind', 'running', `等待占用会话下线… ${Math.round(waited / 1000)}s`);
+      }
+      emit('warn', { msg: `解绑后已等 ${Math.round(timeoutMs / 1000)}s，占用会话仍在线：该设备可能仍在联网（会自动重连），或解绑生效有延迟` });
+      return false;
+    };
 
     const unbindOthers = async () => {
       setStep('unbind', 'running');
@@ -2314,39 +2709,106 @@ async function runConnect(payload) {
       setStep('unbind', acted && !failed ? 'ok' : 'warn',
         acted ? `已解绑 ${acted} 个${failed ? `，${failed} 个失败` : ''}` : '解绑未完成');
       await sleep(800);
-      return { acted, failed };
+      const gone = await waitOnlineSessionsGone(others, 12000);
+      return { acted, failed, gone };
     };
 
-    const askUnbind = async (reasonMsg) => {
-      setStep('portal', 'wait', '疑似被其他设备占用');
-      emit('decision', {
-        kind: 'unbind',
-        hint: `登录被拒（${reasonMsg}）——账号 PC 名额可能已被占用，确认后解绑再登`,
-        detail: others.length
-          ? '同意后：解绑下列设备 → 重新 Captive 登录。'
-          : '未能自动列出占用设备。若确认没有其他电脑在用本账号，可先到右上角齿轮「设置」里点「注销自助后台」再试；同意后仍会尝试继续抢网。',
-        devices: others.map(d => ({ text: d.text, ip: d.ip, mac: d.mac, type: d.type })),
+    // 把服务端缓存的设备表推给右侧「绑定设备」（重拉列表后跟手更新，用户不用手动点刷新）
+    const emitDevicesNow = () => {
+      const devList = self.lastDevices || [];
+      if (!devList.length) return;
+      const lc = localInfo();
+      emit('devices', {
+        devices: devList.map(d => ({
+          text: d.text, ip: d.ip, mac: d.mac, type: d.type,
+          online: d.online, isSelf: isSelfDevice(d, lc), hasAction: !!d.action,
+          maybeSelf: selfState(d.mac, d.ip, lc) === 'maybe',
+        })),
+        endpoints: [],
+        dashLines: [],
       });
+    };
+
+    // 解绑只该动「正在占名额的 PC」：弹窗承诺的是「解绑本账号下**占用**的 PC 设备（手机不动）」，
+    // 所以候选一律窄化到「在线 且 PC 型」——离线绑定记录、手机/平板都不该被自动解绑。
+    // 用**这一次**在线会话/绑定表来判断，不采用上次会话残留的 `self.lastDevices`（那是 stale 数据，
+    // 按它解绑可能解到已经不存在、或现在属于别人的设备）。
+    const onlinePcOnly = list => (list || []).filter(o =>
+      o && o.online && /PC|电脑|desktop|笔记本|station/i.test(String(o.type || '')));
+
+    /* 登录真被名额挡住 → **一次**确认 + 一次完整自救：取设备列表 → 解绑 → 等会话下线，全部在同一次点击里走完。
+     * 为什么合并：原来这里是两个弹窗——先「是否注销自助后台」、拿到列表后再「是否解绑」；
+     * 而且拿不到列表时，「解绑并继续」点下去只会抛错让用户回右侧点刷新、再点一次一键抢网（空点击）。
+     * 现在只有一次确认；确认后取列表要用验证码是**必要输入**，不再算第二次确认。 */
+    const handleOccupancy = async (reasonMsg) => {
+      // ① 先尽力拿列表（不打扰用户、不注销任何会话）：有自助会话就直接重拉（只信**这一次**的数据）。
+      if (!others.length && self.loggedIn) {
+        try { others = onlinePcOnly(await self.loadUnbindCandidates()); }
+        catch (e) { emit('warn', { msg: '重拉绑定设备失败：' + e.message }); }
+      }
+      // ② 占用设备**全部**是本机旧会话（随机硬件地址换过 MAC 造成的自己那条）→ 直接自动解绑，不打扰用户。
+      if (others.length) emit('log', { msg: '解绑候选：' + others.map(o => o.text).join('；') });
+      if (shouldAutoUnbind(others)) {
+        emit('log', { msg: `占用设备 ${others.length} 条全部是「可能本机旧会话」（随机硬件地址所致），自动解绑、不再确认` });
+        const r = await unbindOthers();
+        if (r.acted && !r.failed) return 'ok';
+      }
+      emitDevicesNow();
+
+      // 已登录自助后台，但列表里没有「在线的 PC」可解绑：没东西可做，别再让用户确认。
+      // 占名额的可能是未绑定/手机设备，或那个会话刚消失；硬去解绑只会动到不该动的设备。
+      if (self.loggedIn && !others.length) {
+        emit('log', { msg: '自助后台已登录，但没有可自动解绑的在线 PC 会话：不解绑、不弹窗，直接重登一次（' + reasonMsg + '）' });
+        return 'ok';
+      }
+
+      // ③ 唯一一次确认：把「注销后台占用 / 取列表 / 解绑 / 重登」一次说清（文案组装见 lib/occupancy-prompt.js）。
+      //    此刻列表为空 = 自助后台还没登录（取列表要输验证码），所以只会是「注销后台占用并自动解绑」这一种。
+      emit('decision', occupancyPrompt(others));
+      setStep('portal', 'wait', others.length ? '等待确认：是否解绑占用设备' : '等待确认：是否注销后台占用并自动解绑');
       const act = await waitFor('decision', 300000);
       if (act !== 'continue') {
         setStep('portal', 'pause'); setStep('unbind', 'skip'); setStep('verify', 'skip');
-        finish(false, '已暂停：请先处理占用设备，或到右上角齿轮「设置」里注销自助后台，之后再点“一键抢网”继续。');
+        finish(false, '已暂停：请先处理占用设备，或到「设置」里注销自助后台，之后再点“一键抢网”。');
         return 'paused';
       }
+
+      // ④ 没有列表就先把列表取回来：注销自助后台占用（单会话排他，不注销就登不进去）→ 登录（必要时输验证码）。
       if (!others.length) {
-        setStep('unbind', 'warn', '未能从绑定设备/在线列表解析到占用设备，请在右侧「绑定设备」手动解绑后再试');
-        throw new Error('登录失败：' + reasonMsg + '（右侧「绑定设备」里可能仍有其他电脑；请手动解绑，或在右上角齿轮「设置」里注销自助后台后再一键）');
+        try { await forceSelfSessionReset(); } catch {}
+        try {
+          const lg2 = await selfLoginOnce('需要设备列表来自动解绑：请输入验证码', undefined, 'portal');
+          if (lg2.ok) others = onlinePcOnly(await self.loadUnbindCandidates());
+          else emit('warn', { msg: '未能登录自助服务（拿不到设备列表）：' + (lg2.tip || '未知原因') });
+        } catch (e) {
+          if (e && e.cancelled) throw e; // 用户点了「取消抢网」→ 交给外层收摊
+          emit('warn', { msg: '登录自助服务失败：' + e.message });
+        }
+        if (others.length) emit('log', { msg: '解绑候选：' + others.map(o => o.text).join('；') });
+        emitDevicesNow();
       }
-      await unbindOthers();
-      return null;
+
+      // ⑤ 解绑（含等在线会话真的消失）。真拿不到就不猜设备，直接去重登——
+      //    「再点一次一键抢网就好了」这件事由外层在同一次任务里自动做掉。
+      if (others.length) {
+        const r = await unbindOthers();
+        if (!r.acted) emit('warn', { msg: '没能解绑任何占用设备（原因见上），直接重试登录一次' });
+      } else {
+        emit('warn', { msg: '拿不到设备列表：本次不解绑也不猜设备，直接重试登录一次（' + reasonMsg + '）' });
+      }
+      return 'ok';
     };
 
-    // 若预检已看到其他 PC，先确认再解绑（更稳，避免 captive 一上来就撞名额）
+    // A：预检发现占用时**不再弹窗**——顺畅路径不打扰用户。只有「占用全部是本机旧会话」才静默解绑，
+    //    其余情况直接去登录门户；真被名额挡住时会在下面弹**唯一一次**确认（两处弹窗 → 一处）。
     if (others.length) {
-      setStep('portal', 'wait', '有其他 PC 在线，先确认解绑');
-      emit('log', { msg: '检测到其他 PC 占用名额：' + others.map(d => d.text).join('；') });
-      const paused = await askUnbind('预检发现其他设备在线（PC 名额可能已满）');
-      if (paused === 'paused') return;
+      emit('log', { msg: '预检发现其他 PC 占用名额：' + others.map(d => d.text).join('；') });
+      if (shouldAutoUnbind(others)) {
+        emit('log', { msg: '这些占用全部是「可能本机旧会话」（随机硬件地址所致）：登录门户前先自动解绑' });
+        await unbindOthers();
+      } else {
+        setStep('portal', 'wait', '有其他 PC 在线，先直接登录试试');
+      }
     }
 
     setStep('portal', 'running', 'Captive 自动登录中…');
@@ -2363,74 +2825,36 @@ async function runConnect(payload) {
       return finish(false, '自动登录失败：' + e.message + '（已打开门户登录页，请手动登录后再试）');
     }
     if (!pr.ok && pr.raw && (pr.raw.kind === 'occupancy' || pr.raw.failPage)) {
-      // 失败页/占用拒绝：用右侧「绑定设备」getMacList 组装解绑候选（与控制台刷新一致）
-      if (!others.length) {
-        emit('log', { msg: '登录被拒/信息页：按「绑定设备」列表加载解绑候选…' });
-        try {
-          if (!self.loggedIn) await forceSelfSessionReset();
-          let lg2 = await self.ensureLogin(username, password, null);
-          if (lg2.needCaptcha) {
-            emit('captcha', { img: lg2.captchaB64 });
-            setStep('precheck', 'wait', '加载设备需验证码');
-            const code2 = await waitFor('captcha', 180000);
-            if (code2 === CANCELLED) throw cancelledError('已取消：等待验证码时用户点了取消，本次抢网已停止');
-            if (code2) lg2 = await self.login(username, password, code2);
-          }
-          if (!lg2.ok) {
-            emit('log', { msg: '后台仍无法登录：弹窗确认是否注销自助后台后再继续' });
-            const actS = await askSelfLogout(String(lg2.tip || '后台会话冲突') + '。是否注销自助后台后继续尝试解绑/抢网？');
-            if (actS === 'continue') {
-              await forceSelfSessionReset();
-              let lg3 = await self.ensureLogin(username, password, null);
-              if (lg3.needCaptcha) {
-                emit('captcha', { img: lg3.captchaB64 });
-                setStep('precheck', 'wait', '注销后加载设备需验证码');
-                const code3 = await waitFor('captcha', 180000);
-                if (code3 === CANCELLED) throw cancelledError('已取消：等待验证码时用户点了取消，本次抢网已停止');
-                if (code3) lg3 = await self.login(username, password, code3);
-              }
-              lg2 = lg3;
-            }
-          }
-          if (lg2.ok) {
-            const cands = await self.loadUnbindCandidates();
-            others = cands;
-            const devList = self.lastDevices || [];
-            emit('devices', {
-              devices: devList.map(d => ({
-                text: d.text, ip: d.ip, mac: d.mac, type: d.type,
-                online: d.online, isSelf: isSelfDevice(d, localInfo()), hasAction: !!d.action,
-              })),
-              endpoints: [],
-              dashLines: [],
-            });
-            if (others.length) {
-              emit('log', { msg: '解绑候选（来自绑定设备/在线会话）：' + others.map(o => o.text).join('；') });
-            } else {
-              emit('warn', { msg: '绑定设备列表为空或均为本机，请在右侧「绑定设备」手动解绑后再一键' });
-            }
-          } else {
-            // 后台仍登不上：若本机已有 lastDevices（用户刷新过右侧），直接用
-            if (self.lastDevices && self.lastDevices.length) {
-              others = buildUnbindCandidates(self.lastDevices, [], self.ajaxCsrf || '');
-              emit('log', { msg: '使用已缓存的绑定设备列表：' + others.map(o => o.text).join('；') });
-            }
-          }
-        } catch (e) {
-          emit('warn', { msg: '重载设备列表失败：' + e.message });
-          if (self.lastDevices && self.lastDevices.length) {
-            others = buildUnbindCandidates(self.lastDevices, [], self.ajaxCsrf || '');
-          }
+      /* 登录真被名额挡住 → **一次**确认 + 一次完整自救（取列表 → 解绑 → 重登），不再有两连弹窗，
+         也不再在确认之后把用户打发回去「点右侧刷新、再点一次一键抢网」。 */
+      const handled = await handleOccupancy(pr.msg);
+      if (handled === 'paused') return;
+      /* 解绑后门户仍可能拒绝：在线会话下线有延迟、配额也可能要等下一次登录才放行。
+         实测用户就是「再点一次一键抢网就连上了」——把这一次点击在同一次任务里自动做掉。
+         次数按失败性质分档：**名额类**才多给一次（共 2 次，第二次前等 5s 给服务端同步时间）；
+         密码错误之类的失败仍然只重试 1 次，避免反复提交同一份凭据。 */
+      const quotaHit = /一台|占用|已满|OLno|inuse|名额|只能/i.test(
+        String((pr.raw && pr.raw.msga) || '') + ' ' + String(pr.msg || ''));
+      const maxTry = quotaHit ? 2 : 1;
+      for (let i = 1; i <= maxTry && !pr.ok; i++) {
+        if (i > 1) await sleep(5000);
+        setStep('portal', 'running', i === 1 ? 'Captive 重试登录…' : `Captive 再重试一次登录（${i}/${maxTry}）…`);
+        try { pr = await captiveAutoLogin(username, suffix, password, capLog); }
+        catch (e) {
+          const url = openCaptivePortal();
+          setStep('portal', 'fail', e.message);
+          return finish(false, '自动登录失败：' + e.message + '（已打开门户登录页）');
         }
+        if (pr.ok || !(pr.raw && (pr.raw.kind === 'occupancy' || pr.raw.failPage))) break;
+        emit('warn', { msg: `门户仍被名额挡住（重试 ${i}/${maxTry}）：${pr.msg}` });
       }
-      const paused = await askUnbind(pr.msg);
-      if (paused === 'paused') return;
-      setStep('portal', 'running', 'Captive 重试登录…');
-      try { pr = await captiveAutoLogin(username, suffix, password, capLog); }
-      catch (e) {
-        const url = openCaptivePortal();
-        setStep('portal', 'fail', e.message);
-        return finish(false, '自动登录失败：' + e.message + '（已打开门户登录页）');
+      if (!pr.ok && pr.raw && (pr.raw.kind === 'occupancy' || pr.raw.failPage)) {
+        // unbind 的状态别动：解绑成功过就停在 ok，没解绑就保持原样——别再标成「暂停/失败」误导流水线。
+        setStep('portal', 'pause');
+        setStep('verify', 'skip');
+        return finish(false, '已暂停：' + pr.msg
+          + `。已自动重试 ${maxTry} 次仍未放行——占用设备多半是别人的电脑，或它自己又重连上了；`
+          + '可在右侧「绑定设备」点「刷新」核对后再手动解绑，或稍后再点一次「一键抢网」。');
       }
     }
     if (!pr.ok && pr.raw && pr.raw.kind === 'walled') {
@@ -2451,6 +2875,7 @@ async function runConnect(payload) {
       return finish(false, '自动登录失败：' + pr.msg + '（已打开门户登录页，请手动登录后再试）');
     }
     setStep('portal', 'ok', pr.msg);
+    tick('门户登录');
 
     /* 5. 验证 */
     setStep('verify', 'running');
@@ -2495,6 +2920,7 @@ async function runConnect(payload) {
     }
     setStep('verify', nc && nc.ok ? 'ok' : 'warn',
       st.uid + (nc && nc.ok ? '，测试网址通过' : '（测试网址多次未过，可稍后再试）'));
+    tick('验证放行');
     if (acc) { acc.lastUsed = now(); saveVault(); }
 
     // 联网成功：关掉手动/Captive 弹出的无痕门户窗口
@@ -2513,6 +2939,7 @@ async function runConnect(payload) {
     else emit('error', { msg: e.message || String(e) });
   } finally {
     job.running = false;
+    selfLoginLease.release('connect');
     emit('end', {});
   }
 }
@@ -2571,6 +2998,92 @@ function serveStatic(req, res, urlPath) {
     });
     res.end(buf);
   });
+}
+
+/* 设备/用量数据的组装（路由与「借网查看」共用，避免两处逻辑漂移） */
+async function buildDevicesPayload() {
+  const local = localInfo();
+  let devices = [], via = 'macList';
+  try { devices = await self.loadMacList(); }
+  catch (e) {
+    via = 'html-fallback';
+    devices = parseDevices(await self.get('/Self/service/myMac', true)).devices;
+  }
+  self.lastDevices = devices;
+  let onlineSessions = [];
+  try { onlineSessions = await self.getOnlineSessions(); } catch {}
+  return {
+    devices: devices.map(d => ({
+      text: d.text, ip: d.ip, mac: d.mac, type: d.type, online: typeof d.online === 'boolean' ? d.online : null,
+      isSelf: isSelfDevice(d, local),
+      // 「可能是本机旧会话」：MAC 不在本机当前网卡里，但本机以前用过（随机硬件地址换过 MAC）
+      maybeSelf: selfState(d.mac, d.ip, local) === 'maybe',
+      hasAction: !!d.action,
+    })),
+    endpoints: [],
+    via,
+    onlineSessions,
+  };
+}
+
+async function buildUsagePayload() {
+  const rep = await self.fetchUsageReport();
+  // 设备类型映射来自 getMacList（按最近登录 IP 尽力匹配）
+  const typeByIp = {}, macByIp = {};
+  try {
+    for (const d of await self.loadMacList()) {
+      if (d.ip && d.type && d.type !== '未知') typeByIp[d.ip] = d.type;
+      if (d.ip && d.mac) macByIp[d.ip] = d.mac;
+    }
+  } catch {}
+  const local = localInfo();
+  const rows = rep.rows || [];
+  const agg = new Map();
+  for (const r of rows) {
+    if (!r.ip) continue;
+    let a = agg.get(r.ip);
+    if (!a) {
+      a = {
+        ip: r.ip, sessions: 0, totalKb: 0,
+        lastUsedMs: 0, lastUsedText: '', lastKb: 0,
+        type: typeByIp[r.ip] || (r.type !== '未知' ? r.type : '未知'),
+      };
+      agg.set(r.ip, a);
+    }
+    if (a.type === '未知') {
+      const t = typeByIp[r.ip] || (r.type !== '未知' ? r.type : '');
+      if (t) a.type = t;
+    }
+    a.sessions++;
+    if (r.flowKb != null) a.totalKb += r.flowKb;
+    if (r.startMs && r.startMs >= a.lastUsedMs) {
+      a.lastUsedMs = r.startMs;
+      a.lastUsedText = r.startText || '';
+      if (r.flowKb != null) a.lastKb = r.flowKb;
+    }
+  }
+  const ips = [...agg.values()]
+    .map(a => ({
+      ...a,
+      isSelf: local.ips.has(a.ip),
+      // 用量行只有 IP，靠「绑定设备」列表把 IP 映射回 MAC，再判断是不是本机旧会话
+      maybeSelf: selfState(macByIp[a.ip], a.ip, local) === 'maybe',
+    }))
+    .sort((x, y) => (y.lastUsedMs - x.lastUsedMs) || (y.totalKb - x.totalKb));
+  const err = rep.histError || rep.logError || '';
+  return {
+    ok: true,
+    ips,
+    source: (rep.sources || []).join(' + ') || null,
+    pages: 0,
+    rows: rows.length,
+    hasFlow: rows.some(r => r.flowKb != null),
+    hasTime: rows.some(r => r.startMs > 0),
+    candidates: [],
+    note: rows.length
+      ? ''
+      : ('未取到上网记录' + (err ? '：' + err : '（getLoginHistory 为空或结构未识别）——请开诊断模式后再点一次加载，把 diag/ 文件夹交给我分析')),
+  };
 }
 
 async function handleApi(req, res, pathname, query) {
@@ -2666,6 +3179,24 @@ async function handleApi(req, res, pathname, query) {
         return json(res, 200, { ok: true, url, mac: localMacHex() });
       }
 
+      case '/api/browsers/leftovers': {
+        const found = await listLeftoverBrowsers();
+        return json(res, 200, { ok: true, count: found.length, pids: found.map(b => b.pid) });
+      }
+
+      case '/api/browsers/clean': {
+        const found = await listLeftoverBrowsers();
+        let killed = 0;
+        for (const b of found) {
+          try {
+            spawnSync('taskkill', ['/F', '/T', '/PID', String(b.pid)], { stdio: 'ignore', windowsHide: true });
+            untrackBrowser(b.pid);
+            killed++;
+          } catch {}
+        }
+        return json(res, 200, { ok: true, found: found.length, killed });
+      }
+
       case '/api/hotspot/open':
         // 打开 Windows 的「移动热点」设置页。只跳固定 URI，不接任何用户输入，无注入面；
         // 真正的开关仍由用户在系统设置里自己动手，工具不代改系统配置。
@@ -2722,6 +3253,7 @@ async function handleApi(req, res, pathname, query) {
 
       case '/api/connect': {
         if (job.running) return json(res, 409, { error: '已有任务在运行' });
+        if (borrow.busy) return json(res, 409, { error: '正在借网查看（临时切到校园网取数），等它自动切回原网络后再抢网' });
         const b = await readBody(req);
         job.events = [];
         setImmediate(() => runConnect(b));
@@ -2768,14 +3300,59 @@ async function handleApi(req, res, pathname, query) {
           if (!password) { try { password = passwordOf(a) || ''; } catch (e) { return json(res, 500, { error: e.message }); } }
         }
         if (!username || !password) return json(res, 400, { error: '缺少账号或密码' });
-        const r = await self.ensureLogin(username, password, b.code);
-        return json(res, 200, r);
+        // C：抢网/借网期间别人正在用 self 登录（且可能在等验证码），此时登录会覆盖 checkcode。
+        //    直接 409，让前端提示「稍后再试」，而不是制造一次静默失败。
+        if (!selfLoginLease.acquire('api', 60000)) {
+          const who = selfLoginLease.heldBy();
+          return json(res, 409, {
+            error: '自助登录正忙（' + (who === 'connect' ? '正在一键抢网' : who === 'borrow' ? '正在借网查看' : '另一处正在登录') + '），请稍候再点刷新',
+            busy: true,
+          });
+        }
+        try {
+          const r = await self.ensureLogin(username, password, b.code);
+          return json(res, 200, r);
+        } finally { selfLoginLease.release('api'); }
       }
       case '/api/self/session': {
         if (!self.loggedIn && !self.restored) {
           try { await self.restoreSession(undefined); } catch {}
         }
         return json(res, 200, { loggedIn: self.loggedIn, account: self.account || '' });
+      }
+      case '/api/self/reachable': {
+        // 取设备/用量的硬前提：自助后台本身可达。不可达时前端会问用户要不要借网。
+        const p = await selfReachable(2000);
+        const wi = wifiInfo();
+        const ks = classifyNetwork(wi.ssid);
+        return json(res, 200, {
+          reachable: !!p.ok, ms: p.ms, host: p.host,
+          ssid: wi.ssid || '', kind: ks.kind, campus: ks.campus,
+          campusSsid: CAMPUS_SSID,
+          hasCampusProfile: (wi.profiles || []).includes(CAMPUS_SSID),
+          borrowBusy: borrow.busy,
+        });
+      }
+      case '/api/self/borrow': {
+        // 借网查看：临时切 HNIST-student 取数 → 注销后台 → 自动切回。
+        // 立刻返回，真实进度走 SSE（log / captcha / borrow_done）；别在这里等——用户输验证码就要几十秒。
+        if (borrow.busy) return json(res, 409, { error: '上一次借网查看还没结束，请稍候' });
+        if (job.running) return json(res, 409, { error: '正在一键抢网，不能同时借网查看' });
+        const b = await readBody(req);
+        let username = b.username || '', password = b.password || '';
+        if (b.accountId) {
+          const a = accountById(b.accountId);
+          if (!a) return json(res, 404, { error: '账号不存在' });
+          username = a.username;
+          if (!password) {
+            try { password = passwordOf(a) || ''; } catch (e) { return json(res, 500, { error: '本机解密保存的密码失败：' + e.message }); }
+          }
+        }
+        if (!username || !password) return json(res, 400, { error: '缺少账号或密码（借网查看要登录一次自助后台）' });
+        borrow.busy = true; // 先占位，防连点
+        json(res, 200, { ok: true, started: true, from: wifiInfo().ssid || '' });
+        setImmediate(() => { borrowAndFetch(username, password); });
+        return;
       }
       case '/api/self/logout': {
         if (!self.loggedIn) {
@@ -2800,26 +3377,8 @@ async function handleApi(req, res, pathname, query) {
       }
       case '/api/self/devices': {
         if (!self.loggedIn) return json(res, 200, { needLogin: true });
-        const local = localInfo();
-        let devices = [], via = 'macList';
-        try { devices = await self.loadMacList(); }
-        catch (e) {
-          via = 'html-fallback';
-          try { devices = parseDevices(await self.get('/Self/service/myMac', true)).devices; }
-          catch (e2) { return json(res, 500, { error: e2.message }); }
-        }
-        self.lastDevices = devices;
-        let onlineSessions = [];
-        try { onlineSessions = await self.getOnlineSessions(); } catch {}
-        return json(res, 200, {
-          devices: devices.map(d => ({
-            text: d.text, ip: d.ip, mac: d.mac, type: d.type, online: typeof d.online === 'boolean' ? d.online : null,
-            isSelf: isSelfDevice(d, local), hasAction: !!d.action,
-          })),
-          endpoints: [],
-          via,
-          onlineSessions,
-        });
+        try { return json(res, 200, await buildDevicesPayload()); }
+        catch (e) { return json(res, 500, { error: e.message }); }
       }
       case '/api/self/dashboard': {
         if (!self.loggedIn) return json(res, 200, { needLogin: true });
@@ -2828,57 +3387,7 @@ async function handleApi(req, res, pathname, query) {
       }
       case '/api/self/usage': {
         if (!self.loggedIn) return json(res, 200, { needLogin: true });
-        const rep = await self.fetchUsageReport();
-        // 设备类型映射来自 getMacList（按最近登录 IP 尽力匹配）
-        const typeByIp = {};
-        try {
-          for (const d of await self.loadMacList()) {
-            if (d.ip && d.type && d.type !== '未知') typeByIp[d.ip] = d.type;
-          }
-        } catch {}
-        const local = localInfo();
-        const rows = rep.rows || [];
-        const agg = new Map();
-        for (const r of rows) {
-          if (!r.ip) continue;
-          let a = agg.get(r.ip);
-          if (!a) {
-            a = {
-              ip: r.ip, sessions: 0, totalKb: 0,
-              lastUsedMs: 0, lastUsedText: '', lastKb: 0,
-              type: typeByIp[r.ip] || (r.type !== '未知' ? r.type : '未知'),
-            };
-            agg.set(r.ip, a);
-          }
-          if (a.type === '未知') {
-            const t = typeByIp[r.ip] || (r.type !== '未知' ? r.type : '');
-            if (t) a.type = t;
-          }
-          a.sessions++;
-          if (r.flowKb != null) a.totalKb += r.flowKb;
-          if (r.startMs && r.startMs >= a.lastUsedMs) {
-            a.lastUsedMs = r.startMs;
-            a.lastUsedText = r.startText || '';
-            if (r.flowKb != null) a.lastKb = r.flowKb;
-          }
-        }
-        const ips = [...agg.values()]
-          .map(a => ({ ...a, isSelf: local.ips.has(a.ip) }))
-          .sort((x, y) => (y.lastUsedMs - x.lastUsedMs) || (y.totalKb - x.totalKb));
-        const err = rep.histError || rep.logError || '';
-        return json(res, 200, {
-          ok: true,
-          ips,
-          source: (rep.sources || []).join(' + ') || null,
-          pages: 0,
-          rows: rows.length,
-          hasFlow: rows.some(r => r.flowKb != null),
-          hasTime: rows.some(r => r.startMs > 0),
-          candidates: [],
-          note: rows.length
-            ? ''
-            : ('未取到上网记录' + (err ? '：' + err : '（getLoginHistory 为空或结构未识别）——请开诊断模式后再点一次加载，把 diag/ 文件夹交给我分析')),
-        });
+        return json(res, 200, await buildUsagePayload());
       }
       case '/api/self/unbind': {
         const b = await readBody(req);
@@ -3002,6 +3511,18 @@ setInterval(() => {
 }, 5000);
 
 process.on('unhandledRejection', e => console.error('[unhandledRejection]', e));
+
+/* 服务退出时必须把自己开的浏览器一起带走（心跳自杀、正常退出、Ctrl+C 都算）。
+ * 否则窗口变孤儿，用户只能去任务管理器猜 PID——猜错就杀掉自己的浏览器。 */
+function reapSpawnedBrowsers() {
+  for (const pid of [...spawnedBrowserPids]) killTreeSync(pid);
+  spawnedBrowserPids.clear();
+}
+process.on('exit', reapSpawnedBrowsers);
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) {
+  try { process.on(sig, () => { reapSpawnedBrowsers(); process.exit(0); }); } catch {}
+}
+
 loadVault();
 loadIpNotes();
 startServer(PORT_START);
