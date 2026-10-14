@@ -91,8 +91,9 @@ html, body {
 .badge.net.online { color: var(--online-ink); background: var(--accent); border-color: var(--accent); font-weight: 600; }
 .badge.net.offline { color: var(--warn); border-color: var(--warn-border); }
 
-/* ---------- 账号隐藏开关（眼睛） ---------- */
+/* ---------- 账号隐藏开关（眼睛） / 顶栏图标按钮 ---------- */
 .iconbtn {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -116,6 +117,19 @@ html, body {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+/* 未读红点：首次进入提示「这里有用说明」，点开过就消失（状态记在 localStorage） */
+.iconbtn .dot-badge {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  box-shadow: 0 0 0 2px var(--panel);
+  pointer-events: none;
+}
+.iconbtn .dot-badge.hidden { display: none; }
 body:not(.masked) .eye-shut { display: none; }
 body.masked .eye-open { display: none; }
 
@@ -699,6 +713,36 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .about-ver { font-size: 13px; color: var(--ink-dim); letter-spacing: 0.2px; margin: 2px 0 12px; }
 .about-ver .about-sep { margin: 0 6px; opacity: 0.6; }
 .about-why { font-size: 14px; line-height: 1.75; color: var(--ink); margin: 0 0 16px; }
+/* 第一次使用说明：进门第一眼要能看懂，所以单独成块、有自己标题 */
+.about-guide {
+  border: 1px solid var(--accent-dim);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 0 0 16px;
+  background: var(--accent-glow);
+}
+.about-guide-title { font-size: 14px; font-weight: 600; color: var(--accent); margin-bottom: 8px; }
+.about-steps { margin: 0 0 12px; padding-left: 20px; font-size: 14px; line-height: 1.85; color: var(--ink); }
+.about-note { border-top: 1px dashed var(--border); padding-top: 10px; margin-top: 10px; }
+.about-note-k { font-size: 14px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+.about-note p { font-size: 13.5px; line-height: 1.75; color: var(--ink-dim); margin: 0 0 6px; }
+.about-note p:last-child { margin-bottom: 0; }
+.about-note b { color: var(--ink); }
+/* 「为什么做这个工具」收进折叠块，首屏留给使用说明 */
+.about-why-wrap { margin: 0 0 16px; }
+.about-why-wrap summary {
+  cursor: pointer;
+  font-size: 13.5px;
+  color: var(--ink-dim);
+  padding: 4px 0;
+  list-style: none;
+}
+.about-why-wrap summary::-webkit-details-marker { display: none; }
+.about-why-wrap summary::before { content: "▸ "; color: var(--accent); }
+.about-why-wrap[open] summary::before { content: "▾ "; }
+.about-why-wrap summary:hover { color: var(--accent); }
+.about-why-wrap .about-why { margin: 8px 0 0; }
+.about-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
 .about-links { display: flex; flex-direction: column; }
 .about-row {
   display: flex;

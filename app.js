@@ -492,6 +492,23 @@ function closeCaptcha(val) {
   if (state.capResolve) { state.capResolve(val); state.capResolve = null; }
 }
 
+/* ---------------- 「关于」未读红点 ----------------
+ * 首次进入时铃铛按钮上带一个红点，点开「关于与使用说明」后永久消失。
+ * 用 localStorage 记（和主题/用量折叠一样）；轻量模式没有服务端文件，但 localStorage 一直可用。 */
+const ABOUT_SEEN_KEY = 'cnal_aboutSeen';
+function markAboutSeen() {
+  const dot = $('aboutDot');
+  if (dot) dot.classList.add('hidden');
+  try { localStorage.setItem(ABOUT_SEEN_KEY, '1'); } catch {}
+}
+function initAboutDot() {
+  const dot = $('aboutDot');
+  if (!dot) return;
+  let seen = false;
+  try { seen = localStorage.getItem(ABOUT_SEEN_KEY) === '1'; } catch {}
+  dot.classList.toggle('hidden', seen);
+}
+
 function showDecision(ev) {
   const box = $('decList');
   box.innerHTML = '';
@@ -1774,12 +1791,19 @@ function bindEvents() {
     if (e.key === 'Escape' && !modalSettings.classList.contains('hidden')) modalSettings.classList.add('hidden');
   });
   // 「关于」面板：与设置同一套交互（点按钮开；点关闭 / 点背景 / Esc 关）
+  // 首次进入按钮上带红点（提示这里有使用说明）；打开过一次就永久消失（记在 localStorage）。
   const modalAbout = $('modalAbout');
-  $('btnAbout').onclick = () => modalAbout.classList.remove('hidden');
-  $('btnAboutClose').onclick = () => modalAbout.classList.add('hidden');
-  modalAbout.onclick = (e) => { if (e.target === modalAbout) modalAbout.classList.add('hidden'); };
+  const openAbout = () => {
+    modalAbout.classList.remove('hidden');
+    markAboutSeen();
+  };
+  const closeAbout = () => modalAbout.classList.add('hidden');
+  $('btnAbout').onclick = openAbout;
+  $('btnAboutClose').onclick = closeAbout;
+  if ($('btnAboutOk')) $('btnAboutOk').onclick = closeAbout;
+  modalAbout.onclick = (e) => { if (e.target === modalAbout) closeAbout(); };
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !modalAbout.classList.contains('hidden')) modalAbout.classList.add('hidden');
+    if (e.key === 'Escape' && !modalAbout.classList.contains('hidden')) closeAbout();
   });
   $('btnMask').onclick = () => {
     state.masked = !state.masked;
@@ -1998,6 +2022,8 @@ async function init() {
   setUsageOpen(localStorage.getItem('cnal_usageOpen') === '1', false);
   // 网络检测：默认关闭，只有用户点开才会产生探测；开关状态被记住
   setNetcheck(localStorage.getItem('cnal_netcheck') === '1', false);
+  // 「关于」首次进入红点：没看过就亮着，看过一次就永久消失
+  initAboutDot();
   bindEvents();
   bindTermLogUI();
 
