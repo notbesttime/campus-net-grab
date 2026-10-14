@@ -21,6 +21,7 @@ const { runCheck: runNetCheck } = require('./lib/net-quality');
 const { normMac, rememberMacs, macsFromHistoryRows, selfKind, shouldAutoUnbind } = require('./lib/self-id');
 const { createLease } = require('./lib/lease');
 const { occupancyPrompt } = require('./lib/occupancy-prompt');
+const { planHeartbeatTick } = require('./lib/lifecycle');
 
 const PORT_START = 8787;
 const ROOT = __dirname;
@@ -33,17 +34,18 @@ const CONSOLE_URL_FILE = path.join(ROOT, 'console.url');
 const MAC_HISTORY_FILE = path.join(ROOT, 'seen-macs.json');
 const MAC_HISTORY_MAX = 60;
 const OPEN_BROWSER = !process.env.NO_OPEN;
+// 生命周期由「薄 GUI 启动器」的托盘接管（见 AI_PROJECT_CONTEXT.md §8 第 3 条）：
+// 启动器启动服务时会带 CNAL_MANAGED=1，此时不再靠「心跳 + goodbye」自杀——
+// 退出只由托盘菜单负责。不带该变量（直接跑 node server.js / 用 .bat）时保持原行为。
+const MANAGED = !!process.env.CNAL_MANAGED;
 const TOKEN = crypto.randomBytes(16).toString('hex');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CampusNetAssistant/1.0';
 
-/* 控制台页面心跳：关闭网页后本地服务自动退出 */
+/* 控制台页面心跳：关闭网页后本地服务自动退出。
+ * 阈值与判定规则都抽到了 lib/lifecycle.js（纯函数，已单测）——那里集中写了
+ * 「后台标签页节流所以放宽到 120s」「goodbye 宽限」「休眠恢复给宽限」这些取舍。
+ * 这里只保留状态对象。 */
 const CLIENT_ALIVE_INTERVAL_MS = 10000;
-const GOODBYE_GRACE_MS = 10000;      // pagehide 后仍允许刷新/短中断
-// 页面心跳 10s 一次，但浏览器对后台标签页会做定时器节流（隐藏约 5 分钟后强化节流，
-// 最长 ~1 次/分钟）。45s 的门槛会被这种节流误杀：页面还开着，服务却自杀了。
-// 放宽到 120s，真正的关闭仍由 pagehide 的 goodbye 信标即时兜底。
-const HEARTBEAT_TIMEOUT_MS = 120000;
-const NO_CLIENT_EXIT_MS = 180000;    // 启动后一直没人打开控制台则退出（浏览器可能没弹出）
 const life = {
   startedAt: Date.now(),
   lastAliveAt: 0,
@@ -3486,26 +3488,18 @@ function startServer(port) {
   });
 }
 
-/* 关闭控制台网页（或页面崩溃/浏览器被结束）→ 自动退出本地服务 */
+/* 关闭控制台网页（或页面崩溃/浏览器被结束）→ 自动退出本地服务。
+ * 判定交给纯函数 planHeartbeatTick；MANAGED（启动器托管）时它直接判定「不自退」，
+ * 退出改由启动器托盘的「退出」负责。 */
 let lastTickAt = Date.now();
 setInterval(() => {
   const t = Date.now();
   const tickGap = t - lastTickAt;
   lastTickAt = t;
-  // 本进程刚从休眠/整机冻结里恢复：5s 的巡检跳了一大截。这个心跳空档是
-  // 机器睡出来的，不是页面失联——给页面一个心跳周期（10s）自证还活着，
-  // 别抢在它恢复心跳之前自杀（否则每次合盖/休眠回来都要重启服务）。
-  if (tickGap > 30000) {
-    life.lastAliveAt = Math.max(life.lastAliveAt, t - HEARTBEAT_TIMEOUT_MS + 20000);
-  }
-  if (life.everAlive) {
-    const away = t - life.lastAliveAt > HEARTBEAT_TIMEOUT_MS;
-    const bye = life.goodbyeAt && (t - life.goodbyeAt) > GOODBYE_GRACE_MS && (t - life.lastAliveAt) > GOODBYE_GRACE_MS;
-    if (away || bye) {
-      writeFileAtomic(CONSOLE_URL_FILE, '', 'utf8');
-      process.exit(0);
-    }
-  } else if (t - life.startedAt > NO_CLIENT_EXIT_MS) {
+  const plan = planHeartbeatTick(life, t, tickGap, { managed: MANAGED });
+  life.lastAliveAt = plan.lastAliveAt;
+  if (plan.exit) {
+    writeFileAtomic(CONSOLE_URL_FILE, '', 'utf8');
     process.exit(0);
   }
 }, 5000);
