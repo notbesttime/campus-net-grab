@@ -3482,7 +3482,10 @@ function startServer(port) {
     writeFileAtomic(CONSOLE_URL_FILE, url, 'utf8');
     console.log('');
     console.log('  校园网抢抢抢已启动: ' + url);
-    console.log('  控制台地址已写入 console.url；关闭控制台网页后本服务会自动退出。');
+    // 托管模式下关页面**不会**退出服务（退出交给启动器托盘），文案必须跟着改，否则误导用户
+    console.log(MANAGED
+      ? '  控制台地址已写入 console.url；本服务由启动器托管，从托盘菜单「退出」结束。'
+      : '  控制台地址已写入 console.url；关闭控制台网页后本服务会自动退出。');
     console.log('');
     if (OPEN_BROWSER) openBrowser(url);
   });
