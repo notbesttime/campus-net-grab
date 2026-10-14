@@ -3091,7 +3091,7 @@ async function buildUsagePayload() {
 async function handleApi(req, res, pathname, query) {
   const token = query.get('token') || query.get('t') || req.headers['x-token'];
   if (pathname === '/api/ping') {
-    return json(res, 200, { ok: true, ver: '1.0.0', config: { portal: CFG.portal, self: CFG.self, ncsi: CFG.ncsi } });
+    return json(res, 200, { ok: true, ver: '1.1.0', config: { portal: CFG.portal, self: CFG.self, ncsi: CFG.ncsi } });
   }
   if (pathname === '/api/alive') {
     if (token !== TOKEN) return json(res, 403, { error: '访问令牌无效' });
