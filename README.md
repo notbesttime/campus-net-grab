@@ -4,6 +4,13 @@
 
 **[⬇ 下载最新版（Windows 免安装）](https://github.com/notbesttime/campus-net-grab/releases/latest)**
 
+<img src="docs/screenshots/console.png" alt="控制台主界面" width="880">
+
+<p>
+<img src="docs/screenshots/about.png" alt="关于与使用说明" width="430">
+<img src="docs/screenshots/settings.png" alt="设置" width="336">
+</p>
+
 > **使用边界**：本工具仅用于**你自己拥有或已获授权**的校园网账号，并需遵守学校网络管理规定。
 > 请勿用于他人账号、规避计费或任何绕过认证的行为。详见文末「免责声明与使用边界」。
 
@@ -88,6 +95,20 @@ npm test    # 运行单元测试（node --test，数量以实际输出为准）
 - **自助登录一直要验证码**：该校部署要求验证码，按提示输入即可；成功一次后会话保留，后续抢网一般不用再登
 - **提示“未能识别解绑操作”**：开诊断模式抓一次页面交给我，我来补解析
 - **换了一台电脑**：密码密文无法解密，重新添加账号输入密码即可
+
+## 支持这个项目
+
+工具免费、开源、无广告，也没有任何付费功能。如果它帮你省了每天手动连网的那几步，
+可以请作者喝杯咖啡 —— 完全自愿，不捐也照样用，功能上没有任何区别。
+
+**☕ [请苿钰喝咖啡](https://sponsorvxz.pages.dev/)**
+
+其他联系方式（软件内「关于」里也有）：
+
+| | |
+| --- | --- |
+| 联系邮箱 | xingguang2482@outlook.com |
+| 关于作者 | [nobesttime.pages.dev](https://nobesttime.pages.dev/) |
 
 ## 免责声明与使用边界
 
