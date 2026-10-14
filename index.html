@@ -446,7 +446,7 @@
         <button id="btnAboutClose" class="btn ghost tiny" type="button">关闭</button>
       </div>
       <div class="about-body">
-        <div class="about-ver">校园网抢抢抢 · v1.1.0<span class="about-sep">·</span>更新于 2026-10-14<span class="about-new">本次有更新</span></div>
+        <div class="about-ver">校园网抢抢抢 · v1.1.1<span class="about-sep">·</span>更新于 2026-10-15<span class="about-new">本次有更新</span></div>
 
         <div class="about-cols">
           <!-- 左栏：第一次使用说明 -->
@@ -474,11 +474,20 @@
           <!-- 右栏：更新日志（默认收起，点标题展开） -->
           <section class="changelog">
             <button id="btnChangelog" class="changelog-head fold-btn" type="button" aria-expanded="false">
-              更新日志<span class="cl-cur">最新 v1.1.0</span>
+              更新日志<span class="cl-cur">最新 v1.1.1</span>
             </button>
             <div id="changelogBody" class="changelog-body hidden">
               <div class="cl-item">
-                <div class="cl-ver">v1.1.0<span class="cl-date">2026-10-14</span><span class="cl-tag">最新</span></div>
+                <div class="cl-ver">v1.1.1<span class="cl-date">2026-10-15</span><span class="cl-tag">最新</span></div>
+                <ul class="cl-list">
+                  <li>新增<b>双击即用</b>的启动程序（校园网抢抢抢.exe）：不再有黑色命令行窗口，右下角托盘能看到它正在跑。</li>
+                  <li>机器上没有 Node 也不用管：启动时会自动装一份到程序目录里，<b>不装进系统</b>。</li>
+                  <li>关掉控制台网页后本地服务仍会退出（和以前一样），任务栏图标一起收起，不留后台进程。</li>
+                  <li>修掉「从任务管理器强杀程序后，后台服务变成孤儿、继续占着文件夹删不掉」的问题。</li>
+                </ul>
+              </div>
+              <div class="cl-item">
+                <div class="cl-ver">v1.1.0<span class="cl-date">2026-10-14</span></div>
                 <ul class="cl-list">
                   <li>名额被占用时<b>只问一次</b>：同意后自动取设备列表 → 解绑占用设备 → 重新登录，不用再点第二次。</li>
                   <li>修掉「点了解绑没生效、还得再点一次一键抢网」的空点击。</li>

@@ -9,24 +9,7 @@ function st(over = {}) {
   return { startedAt: T0, lastAliveAt: 0, goodbyeAt: 0, everAlive: false, ...over };
 }
 
-test('启动器托管（managed）时永不因页面关闭而自退', () => {
-  // 即使页面早就没心跳、且已经 goodbye 很久，也不退
-  const r = planHeartbeatTick(
-    st({ everAlive: true, lastAliveAt: T0, goodbyeAt: T0 }),
-    T0 + 10 * 60 * 1000,
-    5000,
-    { managed: true }
-  );
-  assert.equal(r.exit, false);
-  assert.equal(r.reason, 'managed');
-});
-
-test('托管时「一直没人打开控制台」也不退', () => {
-  const r = planHeartbeatTick(st(), T0 + 10 * 60 * 1000, 5000, { managed: true });
-  assert.equal(r.exit, false);
-});
-
-test('非托管：启动后一直没人来，超过 noClientExitMs 才退', () => {
+test('启动后一直没人来：超过 noClientExitMs 才退', () => {
   const before = planHeartbeatTick(st(), T0 + DEFAULTS.noClientExitMs - 1, 5000);
   assert.equal(before.exit, false);
   const after = planHeartbeatTick(st(), T0 + DEFAULTS.noClientExitMs + 1, 5000);
@@ -34,7 +17,7 @@ test('非托管：启动后一直没人来，超过 noClientExitMs 才退', () =
   assert.equal(after.reason, 'no-client');
 });
 
-test('非托管：页面心跳超时（away）→ 退', () => {
+test('页面心跳超时（away）→ 退', () => {
   const alive = planHeartbeatTick(
     st({ everAlive: true, lastAliveAt: T0 }),
     T0 + DEFAULTS.heartbeatTimeoutMs - 1000, 5000
@@ -48,7 +31,7 @@ test('非托管：页面心跳超时（away）→ 退', () => {
   assert.equal(away.reason, 'away');
 });
 
-test('非托管：goodbye 在宽限期内不退，过了宽限期才退', () => {
+test('goodbye 在宽限期内不退，过了宽限期才退（关页面即退出）', () => {
   const s = st({ everAlive: true, lastAliveAt: T0, goodbyeAt: T0 });
   const inGrace = planHeartbeatTick(s, T0 + DEFAULTS.goodbyeGraceMs - 1000, 5000);
   assert.equal(inGrace.exit, false, 'goodbye 宽限期内应容许刷新');
@@ -63,7 +46,6 @@ test('休眠/冻结恢复：巡检间隔跳了一大截时给宽限，不误杀'
   const now = T0 + DEFAULTS.heartbeatTimeoutMs + 60 * 1000;
   const r = planHeartbeatTick(s, now, 60 * 1000);
   assert.equal(r.exit, false, '恢复后应先给一个心跳周期自证');
-  // lastAliveAt 被前推到「刚好超时之前」
   assert.ok(now - r.lastAliveAt <= DEFAULTS.heartbeatTimeoutMs, 'lastAliveAt 已被前推');
 });
 

@@ -34,10 +34,10 @@ const CONSOLE_URL_FILE = path.join(ROOT, 'console.url');
 const MAC_HISTORY_FILE = path.join(ROOT, 'seen-macs.json');
 const MAC_HISTORY_MAX = 60;
 const OPEN_BROWSER = !process.env.NO_OPEN;
-// 生命周期由「薄 GUI 启动器」的托盘接管（见 AI_PROJECT_CONTEXT.md §8 第 3 条）：
-// 启动器启动服务时会带 CNAL_MANAGED=1，此时不再靠「心跳 + goodbye」自杀——
-// 退出只由托盘菜单负责。不带该变量（直接跑 node server.js / 用 .bat）时保持原行为。
-const MANAGED = !!process.env.CNAL_MANAGED;
+// 注：这里曾有一个 CNAL_MANAGED 开关（启动器托管时停用心跳、让服务不自退）。
+// 2026-10-15 按用户实测反馈**撤掉了**：生命周期统一是「关掉控制台网页就退出」，
+// 托管与非托管走同一套判定。原因见 lib/lifecycle.js 文件头与踩坑记录 §19.16。
+// 托盘只负责「运行期间看得见 + 能手动退」，不再负责"服务不自退"。
 const TOKEN = crypto.randomBytes(16).toString('hex');
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) CampusNetAssistant/1.0';
 
@@ -3091,7 +3091,7 @@ async function buildUsagePayload() {
 async function handleApi(req, res, pathname, query) {
   const token = query.get('token') || query.get('t') || req.headers['x-token'];
   if (pathname === '/api/ping') {
-    return json(res, 200, { ok: true, ver: '1.1.0', config: { portal: CFG.portal, self: CFG.self, ncsi: CFG.ncsi } });
+    return json(res, 200, { ok: true, ver: '1.1.1', config: { portal: CFG.portal, self: CFG.self, ncsi: CFG.ncsi } });
   }
   if (pathname === '/api/alive') {
     if (token !== TOKEN) return json(res, 403, { error: '访问令牌无效' });
@@ -3482,24 +3482,20 @@ function startServer(port) {
     writeFileAtomic(CONSOLE_URL_FILE, url, 'utf8');
     console.log('');
     console.log('  校园网抢抢抢已启动: ' + url);
-    // 托管模式下关页面**不会**退出服务（退出交给启动器托盘），文案必须跟着改，否则误导用户
-    console.log(MANAGED
-      ? '  控制台地址已写入 console.url；本服务由启动器托管，从托盘菜单「退出」结束。'
-      : '  控制台地址已写入 console.url；关闭控制台网页后本服务会自动退出。');
+    console.log('  控制台地址已写入 console.url；关闭控制台网页后本服务会自动退出。');
     console.log('');
     if (OPEN_BROWSER) openBrowser(url);
   });
 }
 
 /* 关闭控制台网页（或页面崩溃/浏览器被结束）→ 自动退出本地服务。
- * 判定交给纯函数 planHeartbeatTick；MANAGED（启动器托管）时它直接判定「不自退」，
- * 退出改由启动器托盘的「退出」负责。 */
+ * 判定交给纯函数 planHeartbeatTick（托管/非托管同一套，没有开关）。 */
 let lastTickAt = Date.now();
 setInterval(() => {
   const t = Date.now();
   const tickGap = t - lastTickAt;
   lastTickAt = t;
-  const plan = planHeartbeatTick(life, t, tickGap, { managed: MANAGED });
+  const plan = planHeartbeatTick(life, t, tickGap);
   life.lastAliveAt = plan.lastAliveAt;
   if (plan.exit) {
     writeFileAtomic(CONSOLE_URL_FILE, '', 'utf8');

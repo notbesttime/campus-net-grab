@@ -1,6 +1,6 @@
 {
   "name": "campus-net-grab",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "private": true,
   "description": "高校校园网一键认证工具（Dr.COM / 哆点）：本地 Node 服务 + 网页控制台",
   "license": "MIT",
