@@ -1805,6 +1805,21 @@ function bindEvents() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !modalAbout.classList.contains('hidden')) closeAbout();
   });
+  // 更新日志：默认收起，点标题展开；展开状态被记住（cnal_changelogOpen），箭头由 aria-expanded 驱动
+  if ($('btnChangelog')) {
+    const btn = $('btnChangelog');
+    const body = $('changelogBody');
+    const sync = (open) => {
+      btn.setAttribute('aria-expanded', String(open));
+      if (body) body.classList.toggle('hidden', !open);
+    };
+    sync(localStorage.getItem('cnal_changelogOpen') === '1');
+    btn.onclick = () => {
+      const next = btn.getAttribute('aria-expanded') !== 'true';
+      sync(next);
+      localStorage.setItem('cnal_changelogOpen', next ? '1' : '0');
+    };
+  }
   $('btnMask').onclick = () => {
     state.masked = !state.masked;
     document.body.classList.toggle('masked', state.masked);

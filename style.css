@@ -710,8 +710,33 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .mhead h3 { margin: 0; }
 
 /* ---------- 「关于」面板 ---------- */
+/* 关于弹窗要比通用弹窗宽：说明 + 更新日志尽量一屏放下。
+   高度也不能顶出屏幕（超了内部滚动），所以同时限 max-height。 */
+.mbox.about {
+  max-width: min(880px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+/* 关于弹窗内部收紧一点行距/间距：目标是「默认收起时一屏放下」（1440x900 实测要放得下） */
+.mbox.about .about-steps { line-height: 1.7; margin-bottom: 10px; }
+.mbox.about .about-note { padding-top: 8px; margin-top: 8px; }
+.mbox.about .about-note p { line-height: 1.65; }
+.mbox.about .about-links .about-row { padding: 6px 0; }
+.mbox.about .about-why-wrap { margin-bottom: 8px; }
 .about-ver { font-size: 13px; color: var(--ink-dim); letter-spacing: 0.2px; margin: 2px 0 12px; }
 .about-ver .about-sep { margin: 0 6px; opacity: 0.6; }
+.about-ver .about-new {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+  font-size: 12px;
+}
+/* 宽屏下：使用说明与更新日志左右分栏，省高度、更接近一屏放下 */
+.about-cols { display: grid; grid-template-columns: 1fr; gap: 16px; }
+@media (min-width: 760px) { .about-cols { grid-template-columns: 1.35fr 1fr; align-items: start; } }
 .about-why { font-size: 14px; line-height: 1.75; color: var(--ink); margin: 0 0 16px; }
 /* 第一次使用说明：进门第一眼要能看懂，所以单独成块、有自己标题 */
 .about-guide {
@@ -742,6 +767,60 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .about-why-wrap[open] summary::before { content: "▾ "; }
 .about-why-wrap summary:hover { color: var(--accent); }
 .about-why-wrap .about-why { margin: 8px 0 0; }
+/* ---------- 更新日志（默认收起，点标题展开） ---------- */
+.changelog {
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+.changelog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.changelog-head:hover { color: var(--accent); }
+.changelog-head .cl-cur {
+  margin-left: auto;
+  flex: none;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--ink-dim);
+}
+.changelog-body { padding: 0 12px 12px; border-top: 1px solid var(--border); }
+.cl-item { padding: 10px 0 2px; }
+.cl-item + .cl-item { border-top: 1px dashed var(--border); }
+.cl-ver {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.cl-date { font-size: 12px; font-weight: 400; color: var(--ink-dim); }
+.cl-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-dim);
+  color: var(--accent);
+}
+.cl-list { margin: 0; padding-left: 18px; }
+.cl-list li { font-size: 13px; line-height: 1.7; color: var(--ink-dim); margin-bottom: 3px; }
+.cl-list li b { color: var(--ink); }
 .about-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
 .about-links { display: flex; flex-direction: column; }
 .about-row {
@@ -860,6 +939,23 @@ button.set-group-title::after {
 }
 button.set-group-title[aria-expanded="false"]::after { content: "▸"; }
 button.set-group-title:hover::after { color: var(--accent); }
+
+/* ---------- 通用折叠箭头（与设置里的板块标题一致） ----------
+ * 用法：给带 aria-expanded 的按钮加 .fold-btn，开合状态就由箭头本身告诉用户：
+ *   aria-expanded="true"  → ▾（已展开，点一下收起）
+ *   aria-expanded="false" → ▸（已收起，点一下展开）
+ * 固定宽度 + 居中，避免两个字形宽度不同导致收起/展开时旁边的文字左右跳。 */
+.fold-btn::after {
+  content: "▾";
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.85;
+}
+.fold-btn[aria-expanded="false"]::after { content: "▸"; }
+.fold-btn:hover::after { color: var(--accent); opacity: 1; }
 
 /* ---------- 设置：网络检测指标说明 ---------- */
 .net-guide { font-size: 13px; }

@@ -139,7 +139,7 @@
           <h2>当前账号的各 IP 用量</h2>
           <div class="btn-group">
             <button id="btnUsageRefresh" class="btn ghost" type="button">加载</button>
-            <button id="btnUsageToggle" class="btn ghost" type="button" aria-expanded="false">展开</button>
+            <button id="btnUsageToggle" class="btn ghost fold-btn" type="button" aria-expanded="false">展开</button>
           </div>
         </div>
         <div id="usageBody">
@@ -438,36 +438,75 @@
     </div>
   </div>
 
-  <!-- 弹窗：关于 + 第一次使用说明（顶栏铃铛按钮打开；首次进入按钮上带红点） -->
+  <!-- 弹窗：关于 + 第一次使用说明 + 更新日志（顶栏铃铛按钮打开；首次进入按钮上带红点） -->
   <div id="modalAbout" class="modal hidden">
-    <div class="mbox">
+    <div class="mbox about">
       <div class="mhead">
         <h3>关于与使用说明</h3>
         <button id="btnAboutClose" class="btn ghost tiny" type="button">关闭</button>
       </div>
       <div class="about-body">
-        <div class="about-ver">校园网抢抢抢 · v1.0.0<span class="about-sep">·</span>更新于 2026-10-08</div>
+        <div class="about-ver">校园网抢抢抢 · v1.1.0<span class="about-sep">·</span>更新于 2026-10-14<span class="about-new">本次有更新</span></div>
 
-        <section class="about-guide" id="aboutGuide">
-          <div class="about-guide-title">第一次用，看这里</div>
-          <ol class="about-steps">
-            <li>把账号加进「账号簿」（学号 + 密码，服务商会自动补 <b>@cmcc</b>）。</li>
-            <li>确认「一键抢网时自动连接校园 WiFi」是勾上的，再点<b>一键抢网</b>。</li>
-            <li>坐等它自己跑完五步：连 WiFi → 检测在线 → 预检占用 → 门户登录 → 验证放行。</li>
-            <li>被名额挡住时它会问你一次，点「解绑并继续」就行——剩下的解绑和重新登录它自己做。</li>
-          </ol>
-          <div class="about-note">
-            <div class="about-note-k">弹出的上网登录页 / 浏览器窗口被抢走，是正常现象</div>
-            <p>抢网时会自动开一个<b>独立的无痕窗口</b>去门户填账号登录，它会短暂抢到前台，也可能让系统弹出一个上网登录页。
-              <b>不用管它，也不要自己手动登录</b>——脚本会把账号密码中国移动都填好并提交。</p>
-            <p><b>只要界面没有报错，就什么都别点</b>；如果它停在那儿报错了（红色提示），再看提示内容处理。</p>
-          </div>
-          <div class="about-note">
-            <div class="about-note-k">这几件事工具会自己做完</div>
-            <p>登录成功后它会自动关掉自己开的无痕窗口，并去验证门户、流量和测试网址是否真的放行；
-              只有「门户在线但数据没通」这种它办不了的情况，才会留一个页面让你自己点一下确认。</p>
-          </div>
-        </section>
+        <div class="about-cols">
+          <!-- 左栏：第一次使用说明 -->
+          <section class="about-guide" id="aboutGuide">
+            <div class="about-guide-title">第一次用，看这里</div>
+            <ol class="about-steps">
+              <li>把账号加进「账号簿」（学号 + 密码，服务商会自动补 <b>@cmcc</b>）。</li>
+              <li>确认「一键抢网时自动连接校园 WiFi」是勾上的，再点<b>一键抢网</b>。</li>
+              <li>坐等它自己跑完五步：连 WiFi → 检测在线 → 预检占用 → 门户登录 → 验证放行。</li>
+              <li>被名额挡住时它会问你一次，点「解绑并继续」就行——剩下的解绑和重新登录它自己做。</li>
+            </ol>
+            <div class="about-note">
+              <div class="about-note-k">弹出的上网登录页 / 浏览器窗口被抢走，是正常现象</div>
+              <p>抢网时会自动开一个<b>独立的无痕窗口</b>去门户填账号登录，它会短暂抢到前台，也可能让系统弹出一个上网登录页。
+                <b>不用管它，也不要自己手动登录</b>——脚本会把账号密码中国移动都填好并提交。</p>
+              <p><b>只要界面没有报错，就什么都别点</b>；如果它停在那儿报错了（红色提示），再看提示内容处理。</p>
+            </div>
+            <div class="about-note">
+              <div class="about-note-k">这几件事工具会自己做完</div>
+              <p>登录成功后它会自动关掉自己开的无痕窗口，并去验证门户、流量和测试网址是否真的放行；
+                只有「门户在线但数据没通」时才会留一个页面让你自己点一下确认。</p>
+            </div>
+          </section>
+
+          <!-- 右栏：更新日志（默认收起，点标题展开） -->
+          <section class="changelog">
+            <button id="btnChangelog" class="changelog-head fold-btn" type="button" aria-expanded="false">
+              更新日志<span class="cl-cur">最新 v1.1.0</span>
+            </button>
+            <div id="changelogBody" class="changelog-body hidden">
+              <div class="cl-item">
+                <div class="cl-ver">v1.1.0<span class="cl-date">2026-10-14</span><span class="cl-tag">最新</span></div>
+                <ul class="cl-list">
+                  <li>名额被占用时<b>只问一次</b>：同意后自动取设备列表 → 解绑占用设备 → 重新登录，不用再点第二次。</li>
+                  <li>修掉「点了解绑没生效、还得再点一次一键抢网」的空点击。</li>
+                  <li>自动解绑<b>只动在线的 PC</b>，离线的、手机/平板一律不碰。</li>
+                  <li>自助后台把登录静默退回时，会自动换一张验证码再试一次（验证码最多输两次）。</li>
+                  <li>门户仍被占用时任务自己重试，两次都不行才暂停并说明原因。</li>
+                  <li>顶栏「关于」改成<b>铃铛</b>，首次进入带红点；这里新增本使用说明与更新日志。</li>
+                </ul>
+              </div>
+              <div class="cl-item">
+                <div class="cl-ver">v1.0.0<span class="cl-date">2026-10-08</span></div>
+                <ul class="cl-list">
+                  <li>修复登录窗口残留、自助后台误诊，新增「借网查看」与「可能本机」旧会话识别。</li>
+                  <li>「可能本机」历史 MAC 从本账号上网记录补充，认得出自己换过随机地址的旧会话。</li>
+                  <li>解绑后轮询在线会话直到消失，治「解绑了还被拒、要多点几次」。</li>
+                  <li>自助登录加互斥租约，避免并发覆盖验证码导致被静默弹回登录页。</li>
+                </ul>
+              </div>
+              <div class="cl-item">
+                <div class="cl-ver">v0.9.0<span class="cl-date">2026-10-04</span></div>
+                <ul class="cl-list">
+                  <li>顶栏常驻、四套主题（深色 / 浅色 / 稿纸 / 云母），设置改为弹窗分板块。</li>
+                  <li>首屏不再空等一个检测间隔；服务掉线（心跳误杀）问题修复。</li>
+                </ul>
+              </div>
+            </div>
+          </section>
+        </div>
 
         <details class="about-why-wrap">
           <summary>为什么做这个工具</summary>
