@@ -767,12 +767,20 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
 .about-why-wrap[open] summary::before { content: "▾ "; }
 .about-why-wrap summary:hover { color: var(--accent); }
 .about-why-wrap .about-why { margin: 8px 0 0; }
-/* ---------- 更新日志（默认收起，点标题展开） ---------- */
+/* ---------- 更新日志（默认收起，点标题展开） ----------
+ * 关键：展开/收起**不能改变这块的外框高度**——否则整个关于弹窗会被撑高，
+ * 把下面的「为什么做这个工具 / 联系方式」挤下去，就不是一屏放得下了。
+ * 所以正文区给固定高度上限 + 自己滚动（overscroll-behavior 防止滚到尽头带动外层）。
+ * min() 让它跟随视口：矮屏也能收缩，不会把弹窗顶出屏幕。 */
 .changelog {
   border: 1px solid var(--border-2);
   border-radius: 10px;
   background: var(--panel-2);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: min(52vh, 430px); /* 头部 + 正文的总上限：标题永远可见，正文在内部滚 */
 }
 .changelog-head {
   display: flex;
@@ -789,6 +797,7 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
   text-align: left;
   cursor: pointer;
   transition: color 0.15s;
+  flex: none;
 }
 .changelog-head:hover { color: var(--accent); }
 .changelog-head .cl-cur {
@@ -798,7 +807,15 @@ body.masked .iconbtn { color: var(--warn); border-color: var(--warn-border); }
   font-weight: 400;
   color: var(--ink-dim);
 }
-.changelog-body { padding: 0 12px 12px; border-top: 1px solid var(--border); }
+.changelog-body {
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--border);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
 .cl-item { padding: 10px 0 2px; }
 .cl-item + .cl-item { border-top: 1px dashed var(--border); }
 .cl-ver {
