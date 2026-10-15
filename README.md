@@ -101,14 +101,19 @@ npm test    # 运行单元测试（node --test，数量以实际输出为准）
 工具免费、开源、无广告，也没有任何付费功能。如果它帮你省了每天手动连网的那几步，
 可以请作者喝杯咖啡 —— 完全自愿，不捐也照样用，功能上没有任何区别。
 
-**☕ [请苿钰喝咖啡](https://sponsorvxz.pages.dev/)**
+**☕ 请苿钰喝咖啡**
 
-其他联系方式（软件内「关于」里也有）：
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/contact-sponsor-dark.png">
+  <img src="docs/assets/contact-sponsor-light.png" alt="赞助入口" height="24">
+</picture>
+
+其他联系方式（软件内「关于」里也有；此处为图片，防爬虫抓取明文）：
 
 | | |
 | --- | --- |
-| 联系邮箱 | xingguang2482@outlook.com |
-| 关于作者 | [nobesttime.pages.dev](https://nobesttime.pages.dev/) |
+| 联系邮箱 | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/contact-email-dark.png"><img src="docs/assets/contact-email-light.png" alt="联系邮箱" height="24"></picture> |
+| 关于作者 | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/contact-author-dark.png"><img src="docs/assets/contact-author-light.png" alt="作者主页" height="24"></picture> |
 
 ## 免责声明与使用边界
 
